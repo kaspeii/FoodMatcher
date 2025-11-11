@@ -1,63 +1,100 @@
-from telegram import ReplyKeyboardRemove, Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
-from telegram.ext import Application, CommandHandler, ContextTypes, CallbackContext, MessageHandler, ConversationHandler, CallbackQueryHandler, filters
-from telegram import ReplyKeyboardMarkup
-import db
 import logging
 import os
-from dotenv import load_dotenv
 import re
 from decimal import Decimal, InvalidOperation
+from dotenv import load_dotenv
 
-# Загружаем переменные из .env файла в окружение
-load_dotenv()
+from telegram import (InlineKeyboardButton, InlineKeyboardMarkup,
+                    ReplyKeyboardMarkup, ReplyKeyboardRemove, Update)
+from telegram.ext import (Application, CallbackQueryHandler, CommandHandler,
+                          ConversationHandler, ContextTypes, MessageHandler, filters)
 
-# Загружаем логин из окружения
+# --- НАСТРОЙКА И КОНСТАНТЫ ---
+
+# Загрузка токена с поддержкой .env файла
+load_dotenv() 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
 # Логгинг
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
+)
 logger = logging.getLogger(__name__)
 
+# Импорт модуля базы данных
+import db
+
+# Глобальные кэши для справочников
 ALL_PRODUCTS_CACHE = set()
 ALL_EQUIPMENT_CACHE = set()
 
-# КХ
-(
-    MANAGE_STORAGE,
-    ADD_PRODUCTS,
-    REMOVE_PRODUCTS,
-    MANAGE_EQUIPMENT,
-    ADD_EQUIPMENT,
-    REMOVE_EQUIPMENT,
-    CHOOSE_RECIPE_TYPE,
-    FILTER_BY_TIME,
-    FIND_RECIPES
-) = range(9)
+# Константа для удаления клавиатуры
+REMOVE_KEYBOARD = ReplyKeyboardRemove()
 
-# --- Основное меню ---
+# Состояния для ConversationHandler'ов
+(
+    MANAGE_STORAGE, ADD_PRODUCTS, REMOVE_PRODUCTS,
+    MANAGE_EQUIPMENT, ADD_EQUIPMENT, REMOVE_EQUIPMENT,
+    CHOOSE_RECIPE_TYPE, FILTER_BY_TIME
+) = range(8)
+
+# --- УНИВЕРСАЛЬНЫЕ ФУНКЦИИ И ГЛАВНОЕ МЕНЮ ---
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
-    Главная функция. Приветствует пользователя, показывает основное меню 
-    и служит точкой выхода для всех ConversationHandler'ов.
+    УНИВЕРСАЛЬНАЯ точка входа.
+    Приветствует, принудительно завершает любой диалог и показывает главное меню.
     """
-    user_id = update.message.from_user.id
-    first_name = update.message.from_user.first_name
-    db.ensure_user_exists(user_id, first_name)
-
+    user = update.message.from_user
+    logger.info(f"Пользователь {user.first_name} ({user.id}) запустил /start")
+    db.ensure_user_exists(user.id, user.first_name)
+    
     reply_keyboard = [
         ["Мой холодильник", "Мое оборудование"],
-        ["Подобрать рецепт"], 
+        ["Подобрать рецепт"],
         ["Помощь"],
     ]
-
+    
     await update.message.reply_text(
-        "👋 Добро пожаловать! Я ваш кулинарный помощник.\n\nВыберите действие в меню ниже:",
+        f"👋 Привет, {user.first_name}! Я ваш кулинарный помощник. Выберите действие:",
         reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True),
     )
     
     return ConversationHandler.END
 
-# --- Управление кухней ---
+async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    УНИВЕРСАЛЬНАЯ точка сброса.
+    Принудительно завершает любой диалог и показывает главное меню.
+    """
+    user = update.message.from_user
+    logger.info(f"Пользователь {user.first_name} ({user.id}) запустил /menu")
+    db.ensure_user_exists(user.id, user.first_name)
+    
+    reply_keyboard = [
+        ["Мой холодильник", "Мое оборудование"],
+        ["Подобрать рецепт"],
+        ["Помощь"],
+    ]
+    
+    await update.message.reply_text(
+        f"Выберите действие:",
+        reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True),
+    )
+    
+    return ConversationHandler.END
+
+
+async def back_to_main_menu_inline(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Обрабатывает нажатие inline-кнопки "Назад в меню".
+    Редактирует сообщение, убирая кнопки.
+    """
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text(text="Вы вернулись в главное меню.")
+
+# --- УПРАВЛЕНИЕ ОБОРУДОВАНИЕМ ---
 
 async def manage_equipment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Меню управления оборудованием."""
@@ -80,8 +117,7 @@ async def view_equipment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     return MANAGE_EQUIPMENT
 
 async def add_equipment_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text("Введите оборудование, которое хотите добавить, через запятую:",
-                                    reply_markup=ReplyKeyboardRemove())
+    await update.message.reply_text("Введите оборудование, которое хотите добавить, через запятую:", reply_markup=REMOVE_KEYBOARD)
     return ADD_EQUIPMENT
 
 async def add_equipment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -95,15 +131,13 @@ async def add_equipment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     if valid_equipment:
         db.add_user_equipment(user_id, valid_equipment)
         await update.message.reply_text(f"✅ Добавлено: {', '.join(sorted(valid_equipment))}")
-    
     if invalid_equipment:
         await update.message.reply_text(f"❌ Не найдено в справочнике: {', '.join(sorted(invalid_equipment))}")
 
     return await manage_equipment(update, context)
 
 async def remove_equipment_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text("Введите оборудование, которое хотите удалить, через запятую:",
-                                    reply_markup=ReplyKeyboardRemove())
+    await update.message.reply_text("Введите оборудование для удаления, через запятую:", reply_markup=REMOVE_KEYBOARD)
     return REMOVE_EQUIPMENT
 
 async def remove_equipment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -123,7 +157,7 @@ async def remove_equipment(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     return await manage_equipment(update, context)
 
-# --- Управление холодильником ---
+# --- УПРАВЛЕНИЕ ХОЛОДИЛЬНИКОМ ---
 
 async def manage_storage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Меню управления холодильником."""
@@ -132,11 +166,9 @@ async def manage_storage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         ["Добавить продукты", "Удалить продукты"],
         ["Назад в меню"],
     ]
-    await update.message.reply_text(
-        "Выбери действие:",
-        reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True),
-    )
+    await update.message.reply_text("Выберите действие:", reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True))
     return MANAGE_STORAGE
+
 
 async def view_products(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Просмотр списка продуктов с количеством."""
@@ -196,9 +228,7 @@ def parse_products_with_quantity(text: str) -> list:
     return parsed_products
 
 async def add_products_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Запрос на добавление продуктов."""
-    await update.message.reply_text("Введи продукты, которые хочешь добавить, через запятую:",
-                                    reply_markup=ReplyKeyboardRemove())
+    await update.message.reply_text("Введите продукты для добавления через запятую:", reply_markup=REMOVE_KEYBOARD)
     return ADD_PRODUCTS
 
 async def add_products(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -255,9 +285,7 @@ async def add_products(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 
 
 async def remove_products_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Запрос на удаление продуктов."""
-    await update.message.reply_text("Введи продукты, которые хочешь удалить, через запятую:",
-                                    reply_markup=ReplyKeyboardRemove())
+    await update.message.reply_text("Введите продукты для удаления через запятую:", reply_markup=REMOVE_KEYBOARD)
     return REMOVE_PRODUCTS
 
 async def remove_products(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -319,26 +347,29 @@ async def remove_products(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 
 # --- Подбор рецепта ---
-async def choose_recipe_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Первый шаг подбора: выбор типа."""
-    recipe_type = update.message.text
-    if recipe_type not in ["Только из имеющихся продуктов", "Добавить 1-2 недостающих ингредиента"]:
-         reply_keyboard = [
-            ["Только из имеющихся продуктов"],
-            ["Добавить 1-2 недостающих ингредиента"],
-            ["Назад в меню"],
-        ]
-         await update.message.reply_text("Как будем подбирать рецепт?", reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True))
-         return CHOOSE_RECIPE_TYPE
+async def prompt_recipe_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Шаг 1: Спрашивает, как подбирать рецепт."""
+    reply_keyboard = [
+        ["Только из имеющихся продуктов"],
+        ["Добавить 1-2 недостающих ингредиента"],
+    ]
+    await update.message.reply_text(
+        "Как будем подбирать рецепт?",
+        reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True, one_time_keyboard=True),
+    )
+    return CHOOSE_RECIPE_TYPE
 
-    context.user_data["recipe_type"] = recipe_type
+async def prompt_for_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Шаг 2: Получает тип подбора, сохраняет его и спрашивает про время."""
+    context.user_data["recipe_type"] = update.message.text
+    
+    time_keyboard = ReplyKeyboardMarkup([["Неважно"]], one_time_keyboard=True, resize_keyboard=True)
     
     await update.message.reply_text(
-        "Введите максимальное время приготовления в минутах (например, 30). Если время неважно, введите 0.",
-        reply_markup=ReplyKeyboardRemove()
+        "Введите максимальное время приготовления в минутах или нажмите кнопку.",
+        reply_markup=time_keyboard
     )
     return FILTER_BY_TIME
-
 
 def _calculate_preference_score(recipe: dict, preferences: dict) -> int:
     """Вспомогательная функция для подсчета 'очков' рецепта для сортировки."""
@@ -347,21 +378,6 @@ def _calculate_preference_score(recipe: dict, preferences: dict) -> int:
     score += len(recipe_ingredients.intersection(preferences.get('like', set())))
     score -= len(recipe_ingredients.intersection(preferences.get('avoid', set())))
     return score
-    
-async def prompt_for_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data["recipe_type"] = update.message.text
-    
-    time_keyboard = ReplyKeyboardMarkup(
-        [["Неважно"]],
-        one_time_keyboard=True,
-        resize_keyboard=True
-    )
-    
-    await update.message.reply_text(
-        "Введите максимальное время приготовления в минутах (например, 30). Если время неважно, введите 0.",
-        reply_markup=time_keyboard
-    )
-    return FILTER_BY_TIME
 
 def _parse_recipe_quantity(description: str) -> Decimal | None:
     """
@@ -438,7 +454,7 @@ def find_matching_recipes(user_products: dict, user_equipment: set, forbidden_pr
 
 
 async def find_and_show_recipes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Финальный шаг: поиск, СОРТИРОВКА и отображение рецептов."""
+    """Шаг 3: Получает время, ищет, сортирует и отображает рецепты."""
     user_input = update.message.text
     if user_input == "Неважно":
         max_time = 0
@@ -455,40 +471,35 @@ async def find_and_show_recipes(update: Update, context: ContextTypes.DEFAULT_TY
     user_equipment = db.get_user_equipment(user_id)
     forbidden_products = db.get_user_food_constraints(user_id)
     user_preferences = db.get_user_product_preferences(user_id)
-    
     all_recipes = db.get_all_recipes()
     recipe_type = context.user_data.get("recipe_type")
     
     recipes = find_matching_recipes(user_products, user_equipment, forbidden_products, recipe_type, max_time, all_recipes)
-
     recipes.sort(key=lambda r: _calculate_preference_score(r, user_preferences), reverse=True)
 
-    reply_keyboard = [
-        ["Мой холодильник", "Мое оборудование"],
-        ["Подобрать рецепт"], 
-        ["Помощь"],
-    ]
+    await main_menu(update, context)
 
     if not recipes:
-        await update.message.reply_text("К сожалению, подходящих рецептов не найдено.",
-                                        reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True),)
+        await update.message.reply_text("К сожалению, подходящих рецептов не найдено.")
     else:
         keyboard = []
-        for recipe in recipes:
+        for recipe in recipes[:15]: # Ограничиваем вывод
             button = [InlineKeyboardButton(recipe["name"], callback_data=f"recipe_{recipe['id']}")]
             keyboard.append(button)
+            
+        keyboard.append([InlineKeyboardButton("⬅️ Назад в меню", callback_data="main_menu_back")])
 
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text("Вот что я нашел:", reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True),)
+        await update.message.reply_text("Вот что я нашел:", reply_markup=reply_markup)
     
-
     context.user_data.clear()
-    
     return ConversationHandler.END
 
 
+# --- ДЕТАЛИ РЕЦЕПТА И ГОТОВКА ---
+
 async def recipe_details(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Отображение полной информации о рецепте."""
+    """Отображение полной информации о рецепте с кнопками действий."""
     query = update.callback_query
     await query.answer()
     
@@ -522,28 +533,21 @@ async def recipe_details(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     )
     
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ Приготовить (списать ингредиенты)", callback_data=f"cook_{recipe_id}")]
+        [InlineKeyboardButton("✅ Приготовить (списать ингредиенты)", callback_data=f"cook_{recipe_id}")],
+        [InlineKeyboardButton("⬅️ Назад в меню", callback_data="main_menu_back")]
     ])
 
-    await query.edit_message_text(
-        text=text, 
-        parse_mode='Markdown',
-        reply_markup=keyboard
-    )
+    await query.edit_message_text(text=text, parse_mode='Markdown', reply_markup=keyboard)
     
 async def cook_recipe_and_update_storage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Обрабатывает нажатие кнопки "Приготовить".
-    Списывает ингредиенты из холодильника пользователя.
-    """
+    """Обрабатывает нажатие кнопки "Приготовить" и списывает ингредиенты."""
     query = update.callback_query
     await query.answer(text="Списываю продукты...")
 
     user_id = query.from_user.id
-    
     recipe_id = int(query.data.split("_")[1])
-    
     recipe = db.get_recipe_by_id(recipe_id)
+
     if not recipe:
         await query.edit_message_text(text="Ошибка: рецепт для списания не найден.")
         return
@@ -553,7 +557,6 @@ async def cook_recipe_and_update_storage(update: Update, context: ContextTypes.D
 
     products_to_delete = []
     products_to_update = []
-    
     report_lines = ["Обращаю Ваше внимание, что закончились следующие продукты:"]
 
     for name, desc in required_ingredients.items():
@@ -587,9 +590,13 @@ async def cook_recipe_and_update_storage(update: Update, context: ContextTypes.D
     if products_to_update:
         db.upsert_products_to_user(user_id, products_to_update)
 
-    final_report = "\n".join(report_lines)
+    if len(report_lines) == 1:
+        final_report = "Все необходимые продукты были в достаточном количестве."
+    else:
+        final_report = "\n".join(report_lines)
+        
     await query.edit_message_text(
-        text=f"*{recipe['name']}*\n\n{final_report}\n\nПриятного аппетита!" ,
+        text=f"*{recipe['name']}*\n\n{final_report}\n\nПриятного аппетита!",
         parse_mode='Markdown'
     )
 
@@ -606,20 +613,21 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_text(help_text, parse_mode='Markdown')
 
 def main() -> None:
+    """Основная функция для запуска бота."""
     
     global ALL_PRODUCTS_CACHE, ALL_EQUIPMENT_CACHE
     ALL_PRODUCTS_CACHE = db.get_all_product_names()
     ALL_EQUIPMENT_CACHE = db.get_all_equipment_names()
-    if not ALL_PRODUCTS_CACHE:
-        logger.warning("Справочник продуктов пуст! Проверка названий не будет работать.")
-    else:
-        logger.info(f"Кэш продуктов загружен: {len(ALL_PRODUCTS_CACHE)} наименований.")
-    if not ALL_EQUIPMENT_CACHE:
-        logger.warning("Справочник оборудования пуст! Проверка названий не будет работать.")
-    else:
-        logger.info(f"Кэш оборудования загружен: {len(ALL_EQUIPMENT_CACHE)} наименований.")
+    logger.info(f"Загружено {len(ALL_PRODUCTS_CACHE)} продуктов и {len(ALL_EQUIPMENT_CACHE)} единиц оборудования.")
 
     application = Application.builder().token(TELEGRAM_TOKEN).build()
+    
+    common_fallbacks = [
+        CommandHandler("start", start),
+        CommandHandler("menu", main_menu),
+        CommandHandler("cancel", cancel), # Добавляем нашу новую команду
+        MessageHandler(filters.Regex("^Назад в меню$"), main_menu) # Ваш надежный выход по кнопке
+    ]
 
     # Ветка 1: Управление холодильником
     storage_conv = ConversationHandler(
@@ -633,12 +641,7 @@ def main() -> None:
             ADD_PRODUCTS: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_products)],
             REMOVE_PRODUCTS: [MessageHandler(filters.TEXT & ~filters.COMMAND, remove_products)],
         },
-        fallbacks=[
-            MessageHandler(filters.Regex("^Назад в меню$"), start)
-        ],
-        map_to_parent={
-            ConversationHandler.END: ConversationHandler.END
-        }
+        fallbacks=common_fallbacks,
     )
     
     # Ветка 2: Управление оборудованием
@@ -653,45 +656,32 @@ def main() -> None:
             ADD_EQUIPMENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_equipment)],
             REMOVE_EQUIPMENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, remove_equipment)],
         },
-        fallbacks=[
-            MessageHandler(filters.Regex("^Назад в меню$"), start)
-        ],
-        map_to_parent={
-            ConversationHandler.END: ConversationHandler.END
-        }
+        fallbacks=common_fallbacks,
     )
     
-        # Ветка 3: Подбор рецепта
+    # Ветка 3: Подбор рецепта
     recipe_conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^Подобрать рецепт$"), choose_recipe_type)],
+        entry_points=[MessageHandler(filters.Regex("^Подобрать рецепт$"), prompt_recipe_type)],
         states={
             CHOOSE_RECIPE_TYPE: [MessageHandler(filters.Regex("^(Только из имеющихся продуктов|Добавить 1-2 недостающих ингредиента)$"), prompt_for_time)],
             FILTER_BY_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, find_and_show_recipes)],
         },
-        fallbacks=[
-            MessageHandler(filters.Regex("^Назад в меню$"), start)
-        ],
-        map_to_parent={
-            ConversationHandler.END: ConversationHandler.END
-        }
+        fallbacks=common_fallbacks,
     )
     
-    # 4. Все обработчики в приложении
-    
-    # Команды верхнего уровня
+    # Регистрация всех обработчиков
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", help_command))
-    
+    application.add_handler(CommandHandler("menu", main_menu))
     application.add_handler(MessageHandler(filters.Regex("^Помощь$"), help_command))
+    application.add_handler(CommandHandler("help", help_command))
 
-    # Ветки диалогов
     application.add_handler(storage_conv)
     application.add_handler(equipment_conv)
     application.add_handler(recipe_conv)
 
-    # Обработчики для inline-кнопок (рецепты)
     application.add_handler(CallbackQueryHandler(recipe_details, pattern="^recipe_"))
     application.add_handler(CallbackQueryHandler(cook_recipe_and_update_storage, pattern="^cook_"))
+    application.add_handler(CallbackQueryHandler(back_to_main_menu_inline, pattern="^main_menu_back$"))
 
     application.run_polling()
 

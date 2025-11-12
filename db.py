@@ -24,32 +24,35 @@ _categories = {
 
 # Продукты с привязкой к категориям
 _products = {
-    1: {'name': 'яйцо', 'category_id': 1},
-    2: {'name': 'молоко', 'category_id': 1},
-    3: {'name': 'соль', 'category_id': 5},
-    4: {'name': 'растительное масло', 'category_id': 5},
-    5: {'name': 'помидоры', 'category_id': 2},
-    6: {'name': 'огурцы', 'category_id': 2},
-    7: {'name': 'красный лук', 'category_id': 2},
-    8: {'name': 'фета', 'category_id': 1},
-    9: {'name': 'оливки', 'category_id': 2},
-    10: {'name': 'оливковое масло', 'category_id': 5},
-    11: {'name': 'куриная грудка', 'category_id': 4},
-    12: {'name': 'рис', 'category_id': 5},
-    13: {'name': 'соевый соус', 'category_id': 5},
-    14: {'name': 'овощи', 'category_id': 2},
-    15: {'name': 'кабачок', 'category_id': 2},
-    16: {'name': 'баклажан', 'category_id': 2},
-    17: {'name': 'лук', 'category_id': 2},
-    18: {'name': 'морковь', 'category_id': 2},
-    19: {'name': 'чеснок', 'category_id': 2},
-    20: {'name': 'томатная паста', 'category_id': 5},
-    21: {'name': 'хлеб', 'category_id': 7},
-    22: {'name': 'сыр', 'category_id': 1},
-    23: {'name': 'картофель', 'category_id': 2},
-    24: {'name': 'арахис', 'category_id': 5},
-    25: {'name': 'креветки', 'category_id': 8},
+    # id: { name, category_id, per_unit, calories, ... }
+    1: {'name': 'яйцо', 'category_id': 1, 'per_unit': '1pc', 'calories': Decimal('70'), 'protein': Decimal('6'), 'fat': Decimal('5'), 'carbs': Decimal('0.5')},
+    2: {'name': 'молоко', 'category_id': 1, 'per_unit': '100ml', 'calories': Decimal('60'), 'protein': Decimal('3.5'), 'fat': Decimal('3.2'), 'carbs': Decimal('4.8')},
+    3: {'name': 'соль', 'category_id': 5, 'per_unit': '100g', 'calories': Decimal('0'), 'protein': Decimal('0'), 'fat': Decimal('0'), 'carbs': Decimal('0')},
+    4: {'name': 'растительное масло', 'category_id': 5, 'per_unit': '100g', 'calories': Decimal('884'), 'protein': Decimal('0'), 'fat': Decimal('100'), 'carbs': Decimal('0')},
+    5: {'name': 'помидоры', 'category_id': 2, 'per_unit': '100g', 'calories': Decimal('18'), 'protein': Decimal('0.9'), 'fat': Decimal('0.2'), 'carbs': Decimal('3.9')},
+    6: {'name': 'огурцы', 'category_id': 2, 'per_unit': '100g', 'calories': Decimal('15'), 'protein': Decimal('0.7'), 'fat': Decimal('0.1'), 'carbs': Decimal('3.6')},
+    7: {'name': 'красный лук', 'category_id': 2, 'per_unit': '100g', 'calories': Decimal('40'), 'protein': Decimal('1.1'), 'fat': Decimal('0.1'), 'carbs': Decimal('9.3')},
+    8: {'name': 'фета', 'category_id': 1, 'per_unit': '100g', 'calories': Decimal('264'), 'protein': Decimal('14'), 'fat': Decimal('21'), 'carbs': Decimal('4.1')},
+    9: {'name': 'оливки', 'category_id': 2, 'per_unit': '100g', 'calories': Decimal('115'), 'protein': Decimal('0.8'), 'fat': Decimal('11'), 'carbs': Decimal('6')},
+    10: {'name': 'оливковое масло', 'category_id': 5, 'per_unit': '100g', 'calories': Decimal('884'), 'protein': Decimal('0'), 'fat': Decimal('100'), 'carbs': Decimal('0')},
+    11: {'name': 'куриная грудка', 'category_id': 4, 'per_unit': '100g', 'calories': Decimal('165'), 'protein': Decimal('31'), 'fat': Decimal('3.6'), 'carbs': Decimal('0')},
+    12: {'name': 'рис', 'category_id': 5, 'per_unit': '100g', 'calories': Decimal('130'), 'protein': Decimal('2.7'), 'fat': Decimal('0.3'), 'carbs': Decimal('28')},
+    13: {'name': 'соевый соус', 'category_id': 5, 'per_unit': '100g', 'calories': Decimal('53'), 'protein': Decimal('8'), 'fat': Decimal('0.6'), 'carbs': Decimal('5.6')},
+    14: {'name': 'овощи', 'category_id': 2, 'per_unit': '100g', 'calories': Decimal('65'), 'protein': Decimal('2.9'), 'fat': Decimal('0.4'), 'carbs': Decimal('14')},
+    15: {'name': 'кабачок', 'category_id': 2, 'per_unit': '100g', 'calories': Decimal('17'), 'protein': Decimal('1.2'), 'fat': Decimal('0.3'), 'carbs': Decimal('3.1')},
+    16: {'name': 'баклажан', 'category_id': 2, 'per_unit': '100g', 'calories': Decimal('25'), 'protein': Decimal('1'), 'fat': Decimal('0.2'), 'carbs': Decimal('6')},
+    17: {'name': 'лук', 'category_id': 2, 'per_unit': '100g', 'calories': Decimal('40'), 'protein': Decimal('1.1'), 'fat': Decimal('0.1'), 'carbs': Decimal('9.3')},
+    18: {'name': 'морковь', 'category_id': 2, 'per_unit': '100g', 'calories': Decimal('41'), 'protein': Decimal('0.9'), 'fat': Decimal('0.2'), 'carbs': Decimal('10')},
+    19: {'name': 'чеснок', 'category_id': 2, 'per_unit': '100g', 'calories': Decimal('149'), 'protein': Decimal('6'), 'fat': Decimal('0.5'), 'carbs': Decimal('33')},
+    20: {'name': 'томатная паста', 'category_id': 5, 'per_unit': '100g', 'calories': Decimal('82'), 'protein': Decimal('4.3'), 'fat': Decimal('0.5'), 'carbs': Decimal('19')},
+    21: {'name': 'хлеб', 'category_id': 7, 'per_unit': '100g', 'calories': Decimal('265'), 'protein': Decimal('9'), 'fat': Decimal('3.2'), 'carbs': Decimal('49')},
+    22: {'name': 'сыр', 'category_id': 1, 'per_unit': '100g', 'calories': Decimal('402'), 'protein': Decimal('25'), 'fat': Decimal('33'), 'carbs': Decimal('1.3')},
+    23: {'name': 'картофель', 'category_id': 2, 'per_unit': '100g', 'calories': Decimal('77'), 'protein': Decimal('2'), 'fat': Decimal('0.1'), 'carbs': Decimal('17')},
+    24: {'name': 'арахис', 'category_id': 5, 'per_unit': '100g', 'calories': Decimal('567'), 'protein': Decimal('26'), 'fat': Decimal('49'), 'carbs': Decimal('16')},
+    25: {'name': 'креветки', 'category_id': 8, 'per_unit': '100g', 'calories': Decimal('99'), 'protein': Decimal('24'), 'fat': Decimal('0.3'), 'carbs': Decimal('0.2')},
+    26: {'name': 'гречка', 'category_id': 7, 'per_unit': '100g', 'calories': Decimal('343'), 'protein': Decimal('13'), 'fat': Decimal('3.4'), 'carbs': Decimal('72')},
 }
+
 # Для удобства создадим обратные маппинги и множества
 _product_name_to_id = {v['name']: k for k, v in _products.items()}
 _existing_product_names = set(_product_name_to_id.keys())
@@ -244,10 +247,23 @@ def get_recipe_by_id(recipe_id: int) -> dict | None:
 
 # --- Функции для получения справочников ---
 
-def get_all_product_names() -> set:
-    """Имитация: возвращает set со всеми известными названиями продуктов."""
-    logger.info("Mock DB: Запрошен справочник всех продуктов")
-    return _existing_product_names
+def load_products_cache() -> dict:
+    """
+    Имитация: создает кэш с полной информацией о продуктах,
+    аналогично `load_products_cache_improved()` для реальной БД.
+    """
+    logger.info("Mock DB: Загружен полный кэш продуктов")
+    
+    products_cache = {}
+    for product_id, product_data in _products.items():
+        name = product_data['name'].lower()
+        # Создаем копию, чтобы не менять исходный мок
+        info = product_data.copy() 
+        # Удаляем имя, так как оно становится ключом
+        del info['name'] 
+        products_cache[name] = info
+        
+    return products_cache
 
 def get_all_equipment_names() -> set:
     """Имитация: возвращает set со всеми известными названиями оборудования."""

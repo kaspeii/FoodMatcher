@@ -6,6 +6,7 @@ import tempfile
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from dotenv import load_dotenv
+from typing import Optional, Tuple
 
 from telegram import (InlineKeyboardButton, InlineKeyboardMarkup,
                     ReplyKeyboardMarkup, ReplyKeyboardRemove, Update)
@@ -46,7 +47,7 @@ logger = logging.getLogger(__name__)
 import db
 
 # Глобальные кэши для справочников
-ALL_PRODUCTS_CACHE = set()
+ALL_PRODUCTS_CACHE = {}
 ALL_EQUIPMENT_CACHE = set()
 
 # Константа для удаления клавиатуры
@@ -64,6 +65,37 @@ VOSK_MODEL = None
     ADD_PREFERENCE, ADD_CONSTRAINT, 
     CHOOSE_DELETE_TYPE, AWAIT_PREFERENCE_DELETION, AWAIT_CONSTRAINT_DELETION
 ) = range(14)
+
+# Словарь для нормализации значений
+UNIT_NORMALIZATION_MAP = {
+    'грамм': 'г', 'граммов': 'г', 'гр': 'г', 'грамма': 'г','грам': 'г', 'грамов': 'г', 'гр': 'г', 'грама': 'г','гр.': 'г','г.': 'г',
+    'килограмм': 'кг', 'килограммов': 'кг','килограмма': 'кг','килограм': 'кг', 'килограмов': 'кг','килограма': 'кг','кило': 'кг','килог': 'кг','кграмм': 'кг','кграмма': 'кг','кграммов': 'кг','кграм': 'кг','кграма': 'кг','кграмов': 'кг',
+    'миллилитр': 'мл', 'миллилитров': 'мл', 'миллилитра': 'мл','милилитр': 'мл', 'милилитров': 'мл', 'милилитра': 'мл','млитр': 'мл', 'милил': 'мл', 'млитра': 'мл', 'млитров': 'мл',
+    'литр': 'л', 'литров': 'л', 'литра': 'л','л.': 'л',
+    'столовая ложка': 'ст.л.', 'столовые ложки': 'ст.л.','столовых ложек': 'ст.л.', 'ст л': 'ст.л.', 'ст. ложка': 'ст.л.','ст. ложки': 'ст.л.','ст. ложек': 'ст.л.','ст.л': 'ст.л.','ст. л': 'ст.л.','ст. л.': 'ст.л.','ложка': 'ст.л.', 'ложки': 'ст.л.', 'ложек': 'ст.л.',
+    'чайная ложка': 'ч.л.', 'чайные ложки': 'ч.л.', 'ч л': 'ч.л.', 'ч. ложка': 'ч.л.', 'ч. ложки': 'ч.л.', 'ч.л': 'ч.л.', 'ч. л': 'ч.л.', 'ч. л.': 'ч.л.',
+    'стакан': 'ст', 'стакана': 'ст', 'стаканов': 'ст','ст.': 'ст',
+    'штука': 'шт', 'штуки': 'шт', 'штук': 'шт', 'шт.': 'шт',
+    'щепотки': 'щепотка'
+}
+
+# Карта конверсии: [пользовательская единица] -> (множитель, базовый тип)
+# Базовые типы: 'g' (масса), 'ml' (объем), 'pc' (штуки)
+CONVERSION_FACTORS = {
+    # Масса
+    'г':    (Decimal('1'), 'g'),
+    'кг':   (Decimal('1000'), 'g'),
+    # Объем
+    'мл':   (Decimal('1'), 'ml'),
+    'л':    (Decimal('1000'), 'ml'),
+    # Приблизительные/условные конверсии
+    'ст.л': (Decimal('15'), 'g'), # ст. ложка ~ 15г сахара/соли
+    'ч.л':  (Decimal('5'), 'g'),  # ч. ложка ~ 5г
+    'ст':   (Decimal('200'), 'g'), # стакан ~ 200г
+    # Штуки
+    'шт':   (Decimal('1'), 'pc'),
+}
+
 
 # --- ФУНКЦИИ ДЛЯ РАБОТЫ С ГОЛОСОВЫМИ СООБЩЕНИЯМИ ---
 
@@ -345,14 +377,90 @@ async def view_products(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         await update.message.reply_text("Твой холодильник пуст.")
     return MANAGE_STORAGE
 
+def normalize_unit(unit_str: Optional[str]) -> Optional[str]:
+    """
+    Приводит строку с единицей измерения к стандартному виду.
+    """
+    if not unit_str:
+        return None
+    
+    processed_unit = unit_str.lower().strip().strip('.')
+    
+    return UNIT_NORMALIZATION_MAP.get(processed_unit, processed_unit)
+
 def parse_products_with_quantity(text: str) -> list:
     """
-    Парсит строку вида "продукт1 100 г, продукт2, продукт3 1.5 шт"
-    Если запятых нет (голосовой ввод), пытается умно разделить по пробелам,
-    проверяя комбинации слов на соответствие продуктам из справочника
-    Возвращает список словарей: [{'name': ..., 'quantity': ..., 'unit': ...}]
+    Парсит строку, извлекая название, количество и единицу измерения.
+    Корректно обрабатывает множественные записи без запятых и многословные названия.
     """
+    processed_text = text.replace(',', ' ').strip()
+    
+    # Регулярное выражение для поиска блоков "название + количество + единица"
+    # ([^\d\s]+(?:\s+[^\d\s]+)*) - Группа 1: Название.
+    #                                 Захватывает одно или несколько слов подряд,
+    #                                 пока не встретит цифру.
+    # \s+                             - Пробел между названием и количеством.
+    # (\d+[\.,]?\d*)                  - Группа 2: Количество.
+    # \s*                             - Опциональный пробел.
+    # ([а-яА-Я.]*)?                   - Группа 3: Единица измерения (опционально).
+    pattern = re.compile(r"([^\d\s]+(?:\s+[^\d\s]+)*)\s+(\d+[\.,]?\d*)\s*([а-яА-Я.]*)?")
+    
+    matches = pattern.findall(processed_text)
+    
     parsed_products = []
+<<<<<<< HEAD
+    found_substrings = set()
+
+    for match in matches:
+        # match[0] будет содержать полное многословное название
+        name = match[0].strip()
+        quantity_str = match[1].replace(',', '.')
+        raw_unit = match[2]
+        
+        full_match_str = ' '.join(filter(None, match))
+        found_substrings.add(full_match_str.strip())
+        found_substrings.add(f"{name} {match[1]}".strip())
+
+        try:
+            quantity = Decimal(quantity_str)
+            unit = normalize_unit(raw_unit)
+            
+            parsed_products.append({'name': name.lower(), 'quantity': quantity, 'unit': unit})
+        except InvalidOperation:
+            continue
+
+    # Поиск продуктов без количества
+    temp_text = processed_text
+    for found in sorted(found_substrings, key=len, reverse=True):
+        temp_text = temp_text.replace(found, '')
+        
+    remaining_words = [word.strip() for word in temp_text.split() if word.strip()]
+    for name in remaining_words:
+        if not name.isnumeric() and name not in UNIT_NORMALIZATION_MAP.values():
+             parsed_products.append({'name': name.lower(), 'quantity': None, 'unit': None})
+=======
+
+    # Заменяем единицы измерения
+    def normalize_ingredient(input_text):
+        """Нормализация пользовательского ввода"""
+        normalization_map = {
+            'грамм': 'г', 'граммов': 'г', 'гр': 'г',
+            'килограмм': 'кг', 'килограммов': 'кг', 'кг.': 'кг',
+            'миллилитр': 'мл', 'миллилитров': 'мл', 'мл.': 'мл',
+            'литр': 'л', 'литров': 'л', 'л.': 'л',
+            'стакан': 'ст.', 'стакана': 'ст.', 'стаканов': 'ст.',
+            'ложка': 'ст.л.', 'ложки': 'ст.л.', 'ложек': 'ст.л.',
+            'чайная ложка': 'ч.л.', 'чайные ложки': 'ч.л.', 'чайных ложек': 'ч.л.',
+            'столовая ложка': 'ст.л.', 'столовые ложки': 'ст.л.', 'столовых ложек': 'ст.л.',
+            'штука': 'шт', 'штуки': 'шт', 'штук': 'шт',
+            'щепотки': 'щепотка'
+        }
+
+        for old, new in normalization_map.items():
+            input_text = input_text.replace(old, new)
+
+        return input_text
+    text = normalize_ingredient(text)
     
     # Если есть запятые, разделяем по запятым
     if ',' in text:
@@ -423,10 +531,45 @@ def parse_products_with_quantity(text: str) -> list:
             name = item.lower()
             quantity = None
             unit = None
-        
+
+        standard_units = {"кг": (lambda x: x*1000, "г"), "л": (lambda x: x*1000, "мл"),
+                          "ст.л.": (lambda x: x*15, "г"), "ч.л.": (lambda x: x*5, "г"),
+                          "стакан": (lambda x: x*200, "г")}
+        if quantity and unit and unit in standard_units:
+            quantity = standard_units[unit][0](quantity)
+            unit = standard_units[unit][1]
+
         parsed_products.append({'name': name, 'quantity': quantity, 'unit': unit})
+>>>>>>> origin/units
         
     return parsed_products
+
+def convert_to_standard_unit(quantity: Decimal, unit: Optional[str], product_info: dict) -> Tuple[Optional[Decimal], Optional[str]]:
+    """
+    Конвертирует количество продукта в его стандартную единицу измерения.
+    """
+    if quantity is None:
+        return None, None
+        
+    standard_base_unit = re.sub(r'^\d+', '', product_info['per_unit'])
+
+    if unit is None:
+        if standard_base_unit in ['g', 'ml'] and product_info['per_unit'].startswith('100'):
+             return quantity * 100, standard_base_unit
+        return quantity, standard_base_unit
+
+    if unit == standard_base_unit:
+        return quantity, unit
+
+    if unit not in CONVERSION_FACTORS:
+        return None, None 
+
+    multiplier, unit_base_type = CONVERSION_FACTORS[unit]
+    
+    if unit_base_type != standard_base_unit:
+        return None, None
+
+    return quantity * multiplier, standard_base_unit
 
 async def add_products_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text(
@@ -464,6 +607,7 @@ async def add_products(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     report_added = []
     report_updated = []
     report_invalid = []
+    report_incompatible_units = []
 
     for p_in in parsed_input:
         name = p_in['name']
@@ -471,21 +615,27 @@ async def add_products(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         if name not in ALL_PRODUCTS_CACHE:
             report_invalid.append(name)
             continue
-
+        
+        product_info = ALL_PRODUCTS_CACHE[name]
+        
+        new_quantity, new_unit = convert_to_standard_unit(
+            p_in['quantity'], p_in['unit'], product_info
+        )
+        
+        if new_quantity is None and p_in['quantity'] is not None:
+            report_incompatible_units.append(f"{name} ({p_in['quantity']} {p_in['unit'] or ''})")
+            continue
+        
         existing_product = current_fridge.get(name)
-        new_quantity = p_in['quantity']
-        new_unit = p_in['unit']
 
         if existing_product and existing_product['quantity'] is not None and new_quantity is not None:
             final_quantity = existing_product['quantity'] + new_quantity
-            final_unit = new_unit if new_unit else existing_product['unit']
-            report_updated.append(f"{name} (+{new_quantity})")
+            products_to_upsert.append({'name': name, 'quantity': final_quantity, 'unit': new_unit})
         else:
-            final_quantity = new_quantity
-            final_unit = new_unit
-            report_added.append(f"{name} ({'количество не указано' if final_quantity is None else final_quantity})")
-        
-        products_to_upsert.append({'name': name, 'quantity': final_quantity, 'unit': final_unit})
+            # Добавляем новый продукт
+            report_added.append(f"{name} ({f'{new_quantity} {new_unit}' if new_quantity is not None else 'количество не указано'})")
+            products_to_upsert.append({'name': name, 'quantity': new_quantity, 'unit': new_unit})
+
 
     if products_to_upsert:
         db.upsert_products_to_user(user_id, products_to_upsert)
@@ -497,8 +647,14 @@ async def add_products(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         response_parts.append(f"🔄 Количество увеличено: {', '.join(report_updated)}.")
     if report_invalid:
         response_parts.append(f"❌ Не найдены в справочнике: {', '.join(report_invalid)}.")
+    if report_incompatible_units:
+        response_parts.append(f"⚠️ Не удалось конвертировать: {', '.join(report_incompatible_units)}.")
     
-    await update.message.reply_text("\n".join(response_parts))
+    if not response_parts:
+        await update.message.reply_text("Ничего не было добавлено. Возможно, вы не указали продукты?")
+    else:
+        await update.message.reply_text("\n".join(response_parts))
+        
     return await manage_storage(update, context)
 
 
@@ -1193,7 +1349,7 @@ def main() -> None:
     """Основная функция для запуска бота."""
     
     global ALL_PRODUCTS_CACHE, ALL_EQUIPMENT_CACHE
-    ALL_PRODUCTS_CACHE = db.get_all_product_names()
+    ALL_PRODUCTS_CACHE = db.load_products_cache()
     ALL_EQUIPMENT_CACHE = db.get_all_equipment_names()
     logger.info(f"Загружено {len(ALL_PRODUCTS_CACHE)} продуктов и {len(ALL_EQUIPMENT_CACHE)} единиц оборудования.")
 

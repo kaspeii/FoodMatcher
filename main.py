@@ -336,13 +336,18 @@ async def view_products(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     products = db.get_user_products(user_id)
     if products:
         lines = []
-        for name, data in sorted(products.items()):
+        sorted_products = sorted(
+            products.items(),
+            key=lambda item: item[1].get('db_name', item[0])
+        )
+        for name_key, data in sorted_products:
+            display_name = data.get('db_name') or name_key
             if data['quantity'] is not None:
                 qty_str = f"{data['quantity']:.10f}".rstrip('0').rstrip('.')
                 unit_str = f" {data['unit']}" if data['unit'] else ""
-                lines.append(f"- {name.capitalize()}: {qty_str}{unit_str}")
+                lines.append(f"- {display_name}: {qty_str}{unit_str}")
             else:
-                lines.append(f"- {name.capitalize()}")
+                lines.append(f"- {display_name}")
         await update.message.reply_text("Твои продукты:\n" + "\n".join(lines))
     else:
         await update.message.reply_text("Твой холодильник пуст.")
@@ -498,32 +503,53 @@ async def add_products(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     report_invalid = []
     report_incompatible_units = []
 
+    def format_decimal(value: Decimal) -> str:
+        return f"{value:.10f}".rstrip('0').rstrip('.')
+
     for p_in in parsed_input:
         name = p_in['name']
         
-        if name not in ALL_PRODUCTS_CACHE:
+        product_info = ALL_PRODUCTS_CACHE.get(name)
+        if not product_info:
             report_invalid.append(name)
             continue
         
-        product_info = ALL_PRODUCTS_CACHE[name]
+        product_id = product_info.get('id')
+        db_name = product_info.get('db_name', name)
         
         new_quantity, new_unit = convert_to_standard_unit(
             p_in['quantity'], p_in['unit'], product_info
         )
         
         if new_quantity is None and p_in['quantity'] is not None:
-            report_incompatible_units.append(f"{name} ({p_in['quantity']} {p_in['unit'] or ''})")
+            report_incompatible_units.append(f"{db_name} ({p_in['quantity']} {p_in['unit'] or ''})")
             continue
         
         existing_product = current_fridge.get(name)
 
         if existing_product and existing_product['quantity'] is not None and new_quantity is not None:
             final_quantity = existing_product['quantity'] + new_quantity
-            report_updated.append({'name': name, 'quantity': final_quantity, 'unit': new_unit})
-            products_to_upsert.append({'name': name, 'quantity': final_quantity, 'unit': new_unit})
+            unit_to_store = new_unit or existing_product.get('unit')
+            quantity_text = format_decimal(final_quantity)
+            unit_suffix = f" {unit_to_store}" if unit_to_store else ""
+            report_updated.append(f"{db_name}: {quantity_text}{unit_suffix}")
+            products_to_upsert.append({
+                'product_id': product_id,
+                'quantity': final_quantity,
+                'unit': unit_to_store
+            })
         else:
-            report_added.append(f"{name} ({f'{new_quantity} {new_unit}' if new_quantity is not None else 'количество не указано'})")
-            products_to_upsert.append({'name': name, 'quantity': new_quantity, 'unit': new_unit})
+            if new_quantity is not None:
+                quantity_text = format_decimal(new_quantity)
+                unit_suffix = f" {new_unit}" if new_unit else ""
+                report_added.append(f"{db_name} ({quantity_text}{unit_suffix})")
+            else:
+                report_added.append(f"{db_name} (количество не указано)")
+            products_to_upsert.append({
+                'product_id': product_id,
+                'quantity': new_quantity,
+                'unit': new_unit
+            })
 
 
     if products_to_upsert:
@@ -573,7 +599,7 @@ async def remove_products(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     
     user_id = update.message.from_user.id
     
-    parsed_input = parse_products_with_quantity(text)
+    parsed_input = parse_products_with_quantity(text, set(ALL_PRODUCTS_CACHE.keys()))
     if not parsed_input:
         await update.message.reply_text("Пожалуйста, введите названия продуктов.")
         return await manage_storage(update, context)
@@ -586,29 +612,41 @@ async def remove_products(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     report_reduced = []
     report_not_found = []
 
+    def format_decimal(value: Decimal) -> str:
+        return f"{value:.10f}".rstrip('0').rstrip('.')
+
     for p_in in parsed_input:
         name = p_in['name']
         
-        if name not in current_fridge:
-            report_not_found.append(name)
+        existing_product = current_fridge.get(name)
+        if not existing_product:
+            product_info = ALL_PRODUCTS_CACHE.get(name)
+            display_name = product_info.get('db_name', name) if product_info else name
+            report_not_found.append(display_name)
             continue
 
-        existing_product = current_fridge[name]
+        display_name = existing_product.get('db_name', name)
         quantity_to_remove = p_in['quantity']
 
         if quantity_to_remove is None:
-            products_to_delete.append(name)
-            report_deleted.append(name)
+            products_to_delete.append(existing_product['product_id'])
+            report_deleted.append(display_name)
         elif existing_product['quantity'] is not None:
             new_quantity = existing_product['quantity'] - quantity_to_remove
             if new_quantity <= 0:
-                products_to_delete.append(name)
-                report_deleted.append(f"{name} (полностью)")
+                products_to_delete.append(existing_product['product_id'])
+                report_deleted.append(f"{display_name} (полностью)")
             else:
-                products_to_update.append({'name': name, 'quantity': new_quantity, 'unit': existing_product['unit']})
-                report_reduced.append(f"{name} (-{quantity_to_remove})")
+                products_to_update.append({
+                    'product_id': existing_product['product_id'],
+                    'quantity': new_quantity,
+                    'unit': existing_product['unit']
+                })
+                qty_text = format_decimal(quantity_to_remove)
+                unit_suffix = f" {existing_product['unit']}" if existing_product['unit'] else ""
+                report_reduced.append(f"{display_name} (-{qty_text}{unit_suffix})")
         else:
-            report_not_found.append(f"{name} (нельзя вычесть количество, т.к. оно не было задано)")
+            report_not_found.append(f"{display_name} (нельзя вычесть количество, т.к. оно не было задано)")
 
 
     if products_to_delete:
@@ -1200,12 +1238,16 @@ async def cook_recipe_and_update_storage(update: Update, context: ContextTypes.D
             continue
         
         new_quantity = user_quantity - required_quantity
+        display_name = user_has.get('db_name', name)
         if new_quantity <= 0:
-            products_to_delete.append(name)
-            report_lines.append(f"🗑️ {name.capitalize()}: использован полностью.")
+            products_to_delete.append(user_has['product_id'])
+            report_lines.append(f"🗑️ {display_name}: использован полностью.")
         else:
-            products_to_update.append({'name': name, 'quantity': new_quantity, 'unit': user_has['unit']})
-            # report_lines.append(f"🔄 {name.capitalize()}: осталось {new_quantity:.10f}".rstrip('0').rstrip('.'))
+            products_to_update.append({
+                'product_id': user_has['product_id'],
+                'quantity': new_quantity,
+                'unit': user_has['unit']
+            })
 
     if products_to_delete:
         db.remove_products_from_user(user_id, products_to_delete)

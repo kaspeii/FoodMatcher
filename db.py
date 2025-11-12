@@ -47,7 +47,7 @@ def get_user_products(telegram_id: int) -> dict:
     Формат: {'молоко': {'quantity': Decimal('1.0'), 'unit': 'л'}, 'хлеб': {'quantity': None, 'unit': None}}
     """
     sql = """
-        SELECT p.name, up.quantity, up.unit
+        SELECT p.id AS product_id, p.name, up.quantity, up.unit
         FROM products p
         JOIN user_products up ON p.id = up.product_id
         JOIN users u ON u.id = up.user_id
@@ -60,7 +60,11 @@ def get_user_products(telegram_id: int) -> dict:
             with conn.cursor(cursor_factory=DictCursor) as cur:
                 cur.execute(sql, (telegram_id,))
                 for row in cur.fetchall():
-                    products[row['name']] = {
+                    product_name_db = row['name']
+                    product_key = product_name_db.lower()
+                    products[product_key] = {
+                        'product_id': row['product_id'],
+                        'db_name': product_name_db,
                         'quantity': row['quantity'],
                         'unit': row['unit']
                     }
@@ -90,13 +94,13 @@ def get_user_equipment(telegram_id: int) -> set:
 def upsert_products_to_user(telegram_id: int, products_data: list):
     """
     Пакетное добавление/обновление продуктов пользователя.
-    products_data - список словарей: [{'name': str, 'quantity': Decimal, 'unit': str}]
+    products_data - список словарей: [{'product_id': int, 'quantity': Decimal, 'unit': str}]
     """
     sql = """
         INSERT INTO user_products (user_id, product_id, quantity, unit)
         VALUES (
             (SELECT id FROM users WHERE telegram_id = %(telegram_id)s),
-            (SELECT id FROM products WHERE name = %(name)s),
+            %(product_id)s,
             %(quantity)s,
             %(unit)s
         )
@@ -114,18 +118,18 @@ def upsert_products_to_user(telegram_id: int, products_data: list):
                 execute_batch(cur, sql, products_data)
         conn.close()
 
-def remove_products_from_user(telegram_id: int, product_names: list):
-    """Пакетное удаление продуктов пользователя по списку названий."""
+def remove_products_from_user(telegram_id: int, product_ids: list[int]):
+    """Пакетное удаление продуктов пользователя по списку идентификаторов."""
     sql = """
         DELETE FROM user_products
         WHERE user_id = (SELECT id FROM users WHERE telegram_id = %s)
-        AND product_id IN (SELECT id FROM products WHERE name = ANY(%s));
+        AND product_id = ANY(%s);
     """
     conn = get_db_connection()
-    if conn and product_names:
+    if conn and product_ids:
         with conn:
             with conn.cursor() as cur:
-                cur.execute(sql, (telegram_id, product_names))
+                cur.execute(sql, (telegram_id, product_ids))
         conn.close()
 
 def add_user_equipment(telegram_id: int, equipment_names: set):
@@ -406,7 +410,7 @@ def load_products_cache() -> dict:
         ...
     }
     """
-    sql = "SELECT name, per_unit, calories, protein, fat, carbs, category_id FROM products;"
+    sql = "SELECT id, name, per_unit, calories, protein, fat, carbs, category_id FROM products;"
     products_cache = {}
     conn = get_db_connection()
     if conn:
@@ -416,15 +420,19 @@ def load_products_cache() -> dict:
                     cur.execute(sql)
                     rows = cur.fetchall()
                     for row in rows:
-                        product_name = row[0].lower()
-                        
-                        products_cache[product_name] = {
-                            'per_unit': row[1],
-                            'calories': row[2],
-                            'protein': row[3],
-                            'fat': row[4],
-                            'carbs': row[5],
-                            'category_id': row[6]
+                        product_id = row[0]
+                        product_name_db = row[1]
+                        product_key = product_name_db.lower()
+
+                        products_cache[product_key] = {
+                            'id': product_id,
+                            'db_name': product_name_db,
+                            'per_unit': row[2],
+                            'calories': row[3],
+                            'protein': row[4],
+                            'fat': row[5],
+                            'carbs': row[6],
+                            'category_id': row[7]
                         }
         finally:
             conn.close()

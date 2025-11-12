@@ -22,17 +22,9 @@ _categories = {
     8: 'морепродукты'
 }
 
-_user_product_preferences = {
-    12345: [ # telegram_id
-        {'product_id': 22, 'preference': 'like'},   # Любит 'сыр' (ID 22)
-        {'product_id': 17, 'preference': 'avoid'},  # Не любит 'лук' (ID 17)
-        {'product_id': 11, 'preference': 'like'}    # Любит 'куриная грудка' (ID 11)
-    ]
-}
-
 # Продукты с привязкой к категориям
 _products = {
-    1: {'name': 'яйца', 'category_id': 1},
+    1: {'name': 'яйцо', 'category_id': 1},
     2: {'name': 'молоко', 'category_id': 1},
     3: {'name': 'соль', 'category_id': 5},
     4: {'name': 'растительное масло', 'category_id': 5},
@@ -45,7 +37,7 @@ _products = {
     11: {'name': 'куриная грудка', 'category_id': 4},
     12: {'name': 'рис', 'category_id': 5},
     13: {'name': 'соевый соус', 'category_id': 5},
-    14: {'name': 'овощи', 'category_id': 2}, # Обобщенный продукт
+    14: {'name': 'овощи', 'category_id': 2},
     15: {'name': 'кабачок', 'category_id': 2},
     16: {'name': 'баклажан', 'category_id': 2},
     17: {'name': 'лук', 'category_id': 2},
@@ -83,8 +75,8 @@ _recipes = [
         "id": 1,
         "name": "Классический омлет",
         "description": "Простой и быстрый завтрак.",
-        "ingredients": {"яйца": "3 шт", "молоко": "50 мл", "соль": "по вкусу", "растительное масло": "1 ст.л."},
-        "instructions": "1. Взбейте яйца с молоком и солью. 2. Разогрейте сковороду с маслом. 3. Вылейте яичную смесь и готовьте до готовности.",
+        "ingredients": {"яйцо": "3 шт", "молоко": "50 мл", "соль": "по вкусу", "растительное масло": "1 ст.л."},
+        "instructions": "1. Взбейте яйцо с молоком и солью. 2. Разогрейте сковороду с маслом. 3. Вылейте яичную смесь и готовьте до готовности.",
         "equipment": "Сковорода, венчик",
         "cooking_time_minutes": 10,
         "tags": {'завтрак', 'быстро', 'вегетарианское'},
@@ -136,6 +128,8 @@ _recipes_by_id = {recipe['id']: recipe for recipe in _recipes}
 
 # Счетчик для "auto-increment" ID
 _next_user_id = 1
+_next_preference_id = 1
+_next_constraint_id = 1
 
 # Таблица "users": { telegram_id: {'id': internal_id, 'first_name': 'John'} }
 _users = {}
@@ -145,6 +139,9 @@ _user_products = {}
 
 # Таблица "user_equipment": { telegram_id: {equipment_id_1, equipment_id_2} }
 _user_equipment = {}
+
+# Таблица "user_preferences": { telegram_id: [ {'id': 1, 'note': 'люблю острое'}, ... ] }
+_user_preferences = {}
 
 # Таблица "user_food_constraints": { telegram_id: [{'product_id': int|None, 'category_id': int|None}, ...] }
 _user_food_constraints = {}
@@ -163,7 +160,7 @@ def ensure_user_exists(telegram_id: int, first_name: str):
         _user_products[telegram_id] = {}
         _user_equipment[telegram_id] = set()
         _user_food_constraints[telegram_id] = []
-        _user_product_preferences[telegram_id] = [] 
+        _user_preferences[telegram_id] = [] 
         _next_user_id += 1
         logger.info(f"Mock DB: Создан новый пользователь с telegram_id {telegram_id}")
 
@@ -179,29 +176,6 @@ def get_user_equipment(telegram_id: int) -> set:
     logger.info(f"Mock DB: Запрошено оборудование для telegram_id {telegram_id}")
     equipment_ids = _user_equipment.get(telegram_id, set())
     return { _equipment[eq_id] for eq_id in equipment_ids }
-
-def get_user_food_constraints(telegram_id: int) -> set:
-    """Имитация: возвращает множество всех запрещенных продуктов."""
-    ensure_user_exists(telegram_id, "Mock User")
-    logger.info(f"Mock DB: Запрошены ограничения для telegram_id {telegram_id}")
-    constraints = _user_food_constraints.get(telegram_id, [])
-    forbidden_products = set()
-
-    for constraint in constraints:
-        # Прямое ограничение на продукт
-        if constraint['product_id']:
-            product_name = _products.get(constraint['product_id'], {}).get('name')
-            if product_name:
-                forbidden_products.add(product_name.lower())
-        
-        # Ограничение на категорию
-        if constraint['category_id']:
-            cat_id = constraint['category_id']
-            for prod_data in _products.values():
-                if prod_data['category_id'] == cat_id:
-                    forbidden_products.add(prod_data['name'].lower())
-                    
-    return forbidden_products
 
 def upsert_products_to_user(telegram_id: int, products_data: list):
     """
@@ -280,24 +254,64 @@ def get_all_equipment_names() -> set:
     logger.info("Mock DB: Запрошен справочник всего оборудования")
     return _existing_equipment_names
 
-def get_user_product_preferences(telegram_id: int) -> dict:
-    """
-    Имитация: возвращает словарь с предпочтениями пользователя по продуктам.
-    Формат: {'like': {'яблоки', 'сыр'}, 'avoid': {'лук'}}
-    """
+def get_user_preferences_with_ids(telegram_id: int) -> dict:
+    """Имитация: возвращает список словарей предпочтений пользователя."""
     ensure_user_exists(telegram_id, "Mock User")
-    logger.info(f"Mock DB: Запрошены предпочтения для telegram_id {telegram_id}")
+    logger.info(f"Mock DB: Запрошены предпочтения с ID для telegram_id {telegram_id}")
+    return _user_preferences.get(telegram_id)
 
-    preferences = {'like': set(), 'avoid': set()}
-    user_prefs_list = _user_product_preferences.get(telegram_id, [])
+def get_user_food_constraints_with_ids(telegram_id: int) -> list[dict]:
+    """Имитация: возвращает список словарей ограничений пользователя."""
+    ensure_user_exists(telegram_id, "Mock User")
+    logger.info(f"Mock DB: Запрошены ограничения с ID для telegram_id {telegram_id}")
+    return _user_food_constraints.get(telegram_id, [])
 
-    for pref in user_prefs_list:
-        pref_type = pref.get('preference')
-        product_id = pref.get('product_id')
+def add_user_preference(telegram_id: int, note: str):
+    """Имитация: добавляет новое текстовое предпочтение."""
+    global _next_preference_id
+    ensure_user_exists(telegram_id, "Mock User")
+    _user_preferences[telegram_id].append({'id': _next_preference_id, 'note': note})
+    logger.info(f"Mock DB: Добавлено предпочтение ID {_next_preference_id} для telegram_id {telegram_id}: '{note}'")
+    _next_preference_id += 1
 
-        if pref_type in preferences and product_id:
-            product_name = _products.get(product_id, {}).get('name')
-            if product_name:
-                preferences[pref_type].add(product_name.lower())
+def add_user_food_constraint(telegram_id: int, note: str):
+    """Имитация: добавляет новое текстовое ограничение."""
+    global _next_constraint_id
+    ensure_user_exists(telegram_id, "Mock User")
+    _user_food_constraints[telegram_id].append({'id': _next_constraint_id, 'note': note})
+    logger.info(f"Mock DB: Добавлено ограничение ID {_next_constraint_id} для telegram_id {telegram_id}: '{note}'")
+    _next_constraint_id += 1
 
-    return preferences
+def delete_user_preferences_by_ids(telegram_id: int, note_ids: list[int]):
+    """Имитация: удаляет предпочтения по списку их ID."""
+    ensure_user_exists(telegram_id, "Mock User")
+    if not note_ids: return
+    
+    current_prefs = _user_preferences.get(telegram_id, [])
+    ids_to_delete_set = set(note_ids)
+    
+    _user_preferences[telegram_id] = [p for p in current_prefs if p['id'] not in ids_to_delete_set]
+    logger.info(f"Mock DB: Удалены предпочтения с ID {note_ids} для telegram_id {telegram_id}")
+
+def delete_user_food_constraints_by_ids(telegram_id: int, note_ids: list[int]):
+    """Имитация: удаляет ограничения по списку их ID."""
+    ensure_user_exists(telegram_id, "Mock User")
+    if not note_ids: return
+
+    current_constraints = _user_food_constraints.get(telegram_id, [])
+    ids_to_delete_set = set(note_ids)
+    
+    _user_food_constraints[telegram_id] = [c for c in current_constraints if c['id'] not in ids_to_delete_set]
+    logger.info(f"Mock DB: Удалены ограничения с ID {note_ids} для telegram_id {telegram_id}")
+
+def clear_user_preferences(telegram_id: int):
+    """Имитация: удаляет все предпочтения пользователя."""
+    ensure_user_exists(telegram_id, "Mock User")
+    _user_preferences[telegram_id] = []
+    logger.info(f"Mock DB: Очищены все предпочтения для telegram_id {telegram_id}")
+
+def clear_user_food_constraints(telegram_id: int):
+    """Имитация: удаляет все ограничения пользователя."""
+    ensure_user_exists(telegram_id, "Mock User")
+    _user_food_constraints[telegram_id] = []
+    logger.info(f"Mock DB: Очищены все ограничения для telegram_id {telegram_id}")

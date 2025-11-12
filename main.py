@@ -59,8 +59,11 @@ VOSK_MODEL = None
 (
     MANAGE_STORAGE, ADD_PRODUCTS, REMOVE_PRODUCTS,
     MANAGE_EQUIPMENT, ADD_EQUIPMENT, REMOVE_EQUIPMENT,
-    CHOOSE_RECIPE_TYPE, FILTER_BY_TIME
-) = range(8)
+    CHOOSE_RECIPE_TYPE, FILTER_BY_TIME,
+    MANAGE_PREFERENCES, 
+    ADD_PREFERENCE, ADD_CONSTRAINT, 
+    CHOOSE_DELETE_TYPE, AWAIT_PREFERENCE_DELETION, AWAIT_CONSTRAINT_DELETION
+) = range(14)
 
 # --- ФУНКЦИИ ДЛЯ РАБОТЫ С ГОЛОСОВЫМИ СООБЩЕНИЯМИ ---
 
@@ -165,6 +168,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     
     reply_keyboard = [
         ["Мой холодильник", "Мое оборудование"],
+        ["Предпочтения и ограничения"],
         ["Подобрать рецепт"],
         ["Помощь"],
     ]
@@ -187,6 +191,7 @@ async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     
     reply_keyboard = [
         ["Мой холодильник", "Мое оборудование"],
+        ["Предпочтения и ограничения"],
         ["Подобрать рецепт"],
         ["Помощь"],
     ]
@@ -577,6 +582,199 @@ async def remove_products(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await update.message.reply_text("\n".join(response_parts))
     return await manage_storage(update, context)
 
+# Управление предпочтениями и ограничениям
+
+async def manage_preferences(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Главное меню для предпочтений и ограничений."""
+    reply_keyboard = [
+        ["Посмотреть мои данные"],
+        ["Добавить предпочтение", "Добавить ограничение"],
+        ["Удалить запись"],
+        ["Назад в меню"],
+    ]
+    await update.message.reply_text(
+        "Здесь вы можете указать ваши вкусовые предпочтения и ограничения (например, аллергии) в свободной форме.",
+        reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+    )
+    return MANAGE_PREFERENCES
+
+async def view_preferences_and_constraints(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Отображает все предпочтения и ограничения пользователя в виде нумерованного списка."""
+    user_id = update.message.from_user.id
+    preferences = db.get_user_preferences_with_ids(user_id)
+    constraints = db.get_user_food_constraints_with_ids(user_id)
+    
+    parts = []
+    if preferences:
+        pref_list = "\n".join([f"{i+1}. {p['note']}" for i, p in enumerate(preferences)])
+        parts.append(f"👍 *Ваши предпочтения:*\n{pref_list}")
+    else:
+        parts.append("👍 *Ваши предпочтения:*\n(пусто)")
+
+    if constraints:
+        const_list = "\n".join([f"{i+1}. {c['note']}" for i, c in enumerate(constraints)])
+        parts.append(f"🚫 *Ваши ограничения:*\n{const_list}")
+    else:
+        parts.append("🚫 *Ваши ограничения:*\n(пусто)")
+        
+    await update.message.reply_text("\n\n".join(parts), parse_mode='Markdown')
+    return MANAGE_PREFERENCES
+
+async def add_preference_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.message.reply_text("Напишите, что вы любите в еде:", reply_markup=REMOVE_KEYBOARD)
+    return ADD_PREFERENCE
+
+async def add_constraint_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.message.reply_text("Напишите, что вам нельзя или что вы не любите:", reply_markup=REMOVE_KEYBOARD)
+    return ADD_CONSTRAINT
+
+async def add_preference(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Сохраняет одно или несколько предпочтений, введенных через запятую."""
+    text_input = update.message.text
+    user_id = update.message.from_user.id
+
+    notes_to_add = [note.strip() for note in text_input.split(',') if len(note.strip()) >= 3]
+
+    if not notes_to_add:
+        await update.message.reply_text("Не удалось распознать корректные предпочтения. Попробуйте еще раз, длина каждого пункта должна быть не менее 3 символов.")
+        return ADD_PREFERENCE
+
+    for note in notes_to_add:
+        db.add_user_preference(user_id, note)
+    
+    added_list_str = "\n- ".join(notes_to_add)
+    await update.message.reply_text(f"✅ Добавлено предпочтений: {len(notes_to_add)}\n- {added_list_str}")
+    
+    return await manage_preferences(update, context)
+
+async def add_constraint(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Сохраняет одно или несколько ограничений, введенных через запятую."""
+    text_input = update.message.text
+    user_id = update.message.from_user.id
+
+    constraints_to_add = [constraint.strip() for constraint in text_input.split(',') if len(constraint.strip()) >= 3]
+
+    if not constraints_to_add:
+        await update.message.reply_text("Не удалось распознать корректные ограничения. Попробуйте еще раз, длина каждого пункта должна быть не менее 3 символов.")
+        return ADD_CONSTRAINT
+
+    for constraint in constraints_to_add:
+        db.add_user_food_constraint(user_id, constraint)
+
+    added_list_str = "\n- ".join(constraints_to_add)
+    await update.message.reply_text(f"✅ Добавлено ограничений: {len(constraints_to_add)}\n- {added_list_str}")
+
+    return await manage_preferences(update, context)
+
+async def delete_type_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Спрашивает, что удалять: предпочтения или ограничения."""
+    reply_keyboard = [["Предпочтения"], ["Ограничения"], ["Отмена"]]
+    await update.message.reply_text(
+        "Записи из какого списка вы хотите удалить?",
+        reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True, one_time_keyboard=True)
+    )
+    return CHOOSE_DELETE_TYPE
+
+async def list_preferences_for_deletion(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Показывает список предпочтений для удаления."""
+    user_id = update.message.from_user.id
+    preferences = db.get_user_preferences_with_ids(user_id)
+    if not preferences:
+        await update.message.reply_text("Список предпочтений пуст. Нечего удалять.", reply_markup=REMOVE_KEYBOARD)
+        return await manage_preferences(update, context)
+
+    # Сохраняем карту "порядковый номер -> id в базе"
+    context.user_data['id_map'] = {i + 1: p['id'] for i, p in enumerate(preferences)}
+    
+    pref_list = "\n".join([f"{i+1}. {p['note']}" for i, p in enumerate(preferences)])
+    await update.message.reply_text(
+        f"Ваши предпочтения:\n{pref_list}\n\n"
+        "Введите номера записей, которые хотите удалить (через запятую, например: 1, 3). "
+        "Или напишите 'все', чтобы очистить список.",
+        reply_markup=REMOVE_KEYBOARD
+    )
+    return AWAIT_PREFERENCE_DELETION
+
+async def list_constraints_for_deletion(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Показывает список ограничений для удаления."""
+    user_id = update.message.from_user.id
+    constraints = db.get_user_food_constraints_with_ids(user_id)
+    if not constraints:
+        await update.message.reply_text("Список ограничений пуст. Нечего удалять.", reply_markup=REMOVE_KEYBOARD)
+        return await manage_preferences(update, context)
+
+    context.user_data['id_map'] = {i + 1: c['id'] for i, c in enumerate(constraints)}
+    
+    const_list = "\n".join([f"{i+1}. {c['note']}" for i, c in enumerate(constraints)])
+    await update.message.reply_text(
+        f"Ваши ограничения:\n{const_list}\n\n"
+        "Введите номера записей для удаления (например: 2, 4) или 'все' для очистки.",
+        reply_markup=REMOVE_KEYBOARD
+    )
+    return AWAIT_CONSTRAINT_DELETION
+
+async def delete_preferences_by_number(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Обрабатывает ввод номеров для удаления предпочтений."""
+    user_id = update.message.from_user.id
+    text = update.message.text.lower().strip()
+
+    if text == 'все':
+        db.clear_user_preferences(user_id)
+        await update.message.reply_text("✅ Все предпочтения удалены.")
+        return await manage_preferences(update, context)
+
+    try:
+        # Парсим номера, введенные пользователем
+        input_numbers = {int(n.strip()) for n in text.replace(',', ' ').split()}
+        id_map = context.user_data.get('id_map', {})
+        
+        # Преобразуем порядковые номера в реальные ID из базы
+        ids_to_delete = [id_map[num] for num in input_numbers if num in id_map]
+        
+        if not ids_to_delete:
+            await update.message.reply_text("Не найдено записей с такими номерами. Попробуйте еще раз.")
+            return AWAIT_PREFERENCE_DELETION
+            
+        db.delete_user_preferences_by_ids(user_id, ids_to_delete)
+        await update.message.reply_text(f"✅ Записи с номерами {', '.join(map(str, sorted(input_numbers)))} удалены.")
+
+    except ValueError:
+        await update.message.reply_text("Пожалуйста, введите числа, разделенные запятой, или слово 'все'.")
+        return AWAIT_PREFERENCE_DELETION
+    finally:
+        context.user_data.pop('id_map', None)
+        
+    return await manage_preferences(update, context)
+
+async def delete_constraints_by_number(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Обрабатывает ввод номеров для удаления ограничений."""
+    user_id = update.message.from_user.id
+    text = update.message.text.lower().strip()
+
+    if text == 'все':
+        db.clear_user_food_constraints(user_id)
+        await update.message.reply_text("✅ Все ограничения удалены.")
+        return await manage_preferences(update, context)
+
+    try:
+        input_numbers = {int(n.strip()) for n in text.replace(',', ' ').split()}
+        id_map = context.user_data.get('id_map', {})
+        ids_to_delete = [id_map[num] for num in input_numbers if num in id_map]
+        
+        if not ids_to_delete:
+            await update.message.reply_text("Не найдено записей с такими номерами. Попробуйте еще раз.")
+            return AWAIT_CONSTRAINT_DELETION
+            
+        db.delete_user_food_constraints_by_ids(user_id, ids_to_delete)
+        await update.message.reply_text(f"✅ Записи с номерами {', '.join(map(str, sorted(input_numbers)))} удалены.")
+
+    except ValueError:
+        await update.message.reply_text("Пожалуйста, введите числа, разделенные запятой, или слово 'все'.")
+        return AWAIT_CONSTRAINT_DELETION
+    finally:
+        context.user_data.pop('id_map', None)
+        
+    return await manage_preferences(update, context)
 
 # --- Подбор рецепта ---
 async def prompt_recipe_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -734,20 +932,13 @@ def preliminary_filter_recipes(user_products: dict, recipe_type: str, max_time: 
     return matched_recipes
 
 
-async def filter_recipes_with_llm(recipes_to_filter: list, equipment_constraints: set, strict_constraints: set, soft_constraints: dict) -> list[str]:
+async def filter_recipes_with_llm(recipes_to_filter: list, equipment_constraints: set, strict_constraints: list, soft_constraints: list) -> list[str]:
     """
     Отправляет список рецептов и ограничения пользователя в LLM для фильтрации и сортировки.
     Возвращает отсортированный список названий рецептов.
     """
     if not recipes_to_filter:
         return []
-
-    preferences_text_parts = []
-    if soft_constraints.get('like'):
-        preferences_text_parts.append(f"Пользователь любит: {', '.join(soft_constraints['like'])}")
-    if soft_constraints.get('avoid'):
-        preferences_text_parts.append(f"Пользователь НЕ любит: {', '.join(soft_constraints['avoid'])}")
-    preferences_text = ". ".join(preferences_text_parts) if preferences_text_parts else "Нет особых предпочтений."
 
     recipes_json = json.dumps(recipes_to_filter, ensure_ascii=False, indent=2, cls=SetEncoder)
 
@@ -756,12 +947,12 @@ async def filter_recipes_with_llm(recipes_to_filter: list, equipment_constraints
 
 [СТРОГИЕ ОГРАНИЧЕНИЯ - НЕЛЬЗЯ НАРУШАТЬ]:
 - Медицинские ограничения
-{list(strict_constraints)}
+{strict_constraints}
 - У пользователя есть только
 {list(equipment_constraints)}
 
 [ПРЕДПОЧТЕНИЯ - ЖЕЛАТЕЛЬНО УЧЕСТЬ]:
-{preferences_text}
+{soft_constraints}
 
 [ИНСТРУКЦИИ]:
 1. Сначала исключи все рецепты, нарушающие СТРОГИЕ ограничения
@@ -830,10 +1021,13 @@ async def find_and_show_recipes(update: Update, context: ContextTypes.DEFAULT_TY
     
     user_products = db.get_user_products(user_id)
     user_equipment = db.get_user_equipment(user_id)
-    food_constraints = db.get_user_food_constraints(user_id)
-    user_preferences = db.get_user_product_preferences(user_id)
+    constraints_from_db  = db.get_user_food_constraints_with_ids(user_id)
+    preferences_from_db  = db.get_user_preferences_with_ids(user_id)
     all_recipes = db.get_all_recipes()
     recipe_type = context.user_data.get("recipe_type")
+    
+    user_preferences = [p['note'] for p in preferences_from_db]
+    food_constraints = [c['note'] for c in constraints_from_db]
     
     pre_filtered_recipes = preliminary_filter_recipes(user_products, recipe_type, max_time, all_recipes)
     # recipes.sort(key=lambda r: _calculate_preference_score(r, user_preferences), reverse=True)
@@ -1059,8 +1253,29 @@ def main() -> None:
         },
         fallbacks=common_fallbacks,
     )
+    # Ветка 3: Управление предпочтениями и ограничениями
+    preferences_conv = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex("^Предпочтения и ограничения$"), manage_preferences)],
+        states={
+            MANAGE_PREFERENCES: [
+                MessageHandler(filters.Regex("^Посмотреть мои данные$"), view_preferences_and_constraints),
+                MessageHandler(filters.Regex("^Добавить предпочтение$"), add_preference_prompt),
+                MessageHandler(filters.Regex("^Добавить ограничение$"), add_constraint_prompt),
+                MessageHandler(filters.Regex("^Удалить запись$"), delete_type_prompt),
+            ],
+            ADD_PREFERENCE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_preference)],
+            ADD_CONSTRAINT: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_constraint)],
+            CHOOSE_DELETE_TYPE: [
+                MessageHandler(filters.Regex("^Предпочтения$"), list_preferences_for_deletion),
+                MessageHandler(filters.Regex("^Ограничения$"), list_constraints_for_deletion),
+            ],
+            AWAIT_PREFERENCE_DELETION: [MessageHandler(filters.TEXT & ~filters.COMMAND, delete_preferences_by_number)],
+            AWAIT_CONSTRAINT_DELETION: [MessageHandler(filters.TEXT & ~filters.COMMAND, delete_constraints_by_number)],
+        },
+        fallbacks=common_fallbacks,
+    )
     
-    # Ветка 3: Подбор рецепта
+    # Ветка 4: Подбор рецепта
     recipe_conv = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^Подобрать рецепт$"), prompt_recipe_type)],
         states={
@@ -1078,6 +1293,7 @@ def main() -> None:
 
     application.add_handler(storage_conv)
     application.add_handler(equipment_conv)
+    application.add_handler(preferences_conv)
     application.add_handler(recipe_conv)
 
     application.add_handler(CallbackQueryHandler(recipe_details, pattern="^recipe_"))

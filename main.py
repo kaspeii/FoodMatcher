@@ -442,7 +442,8 @@ def parse_products_with_quantity(text: str) -> list:
             unit = None
 
         standard_units = {"кг": (lambda x: x*1000, "г"), "л": (lambda x: x*1000, "мл"),
-                          "ст.л.": (lambda x: x*15, "г"), "ч.л.": (lambda x: x*5, "г")}
+                          "ст.л.": (lambda x: x*15, "г"), "ч.л.": (lambda x: x*5, "г"),
+                          "стакан": (lambda x: x*200, "г")}
         if quantity and unit and unit in standard_units:
             quantity = standard_units[unit][0](quantity)
             unit = standard_units[unit][1]

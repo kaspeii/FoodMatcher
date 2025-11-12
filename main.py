@@ -408,6 +408,7 @@ def parse_products_with_quantity(text: str) -> list:
     matches = pattern.findall(processed_text)
     
     parsed_products = []
+<<<<<<< HEAD
     found_substrings = set()
 
     for match in matches:
@@ -437,6 +438,109 @@ def parse_products_with_quantity(text: str) -> list:
     for name in remaining_words:
         if not name.isnumeric() and name not in UNIT_NORMALIZATION_MAP.values():
              parsed_products.append({'name': name.lower(), 'quantity': None, 'unit': None})
+=======
+
+    # Заменяем единицы измерения
+    def normalize_ingredient(input_text):
+        """Нормализация пользовательского ввода"""
+        normalization_map = {
+            'грамм': 'г', 'граммов': 'г', 'гр': 'г',
+            'килограмм': 'кг', 'килограммов': 'кг', 'кг.': 'кг',
+            'миллилитр': 'мл', 'миллилитров': 'мл', 'мл.': 'мл',
+            'литр': 'л', 'литров': 'л', 'л.': 'л',
+            'стакан': 'ст.', 'стакана': 'ст.', 'стаканов': 'ст.',
+            'ложка': 'ст.л.', 'ложки': 'ст.л.', 'ложек': 'ст.л.',
+            'чайная ложка': 'ч.л.', 'чайные ложки': 'ч.л.', 'чайных ложек': 'ч.л.',
+            'столовая ложка': 'ст.л.', 'столовые ложки': 'ст.л.', 'столовых ложек': 'ст.л.',
+            'штука': 'шт', 'штуки': 'шт', 'штук': 'шт',
+            'щепотки': 'щепотка'
+        }
+
+        for old, new in normalization_map.items():
+            input_text = input_text.replace(old, new)
+
+        return input_text
+    text = normalize_ingredient(text)
+    
+    # Если есть запятые, разделяем по запятым
+    if ',' in text:
+        items = [item.strip() for item in text.split(',') if item.strip()]
+    else:
+        words = text.strip().split()
+        items = []
+        i = 0
+        
+        while i < len(words):
+            if re.match(r'^\d+\.?\d*$', words[i]):
+                if i + 1 < len(words) and len(words[i + 1]) <= 5:
+                    i += 2
+                    continue
+                else:
+                    i += 1
+                    continue
+            
+            # Пытаемся найти продукт, начиная с самых длинных комбинаций (3, 2, 1 слово)
+            found = False
+            for length in [3, 2, 1]:
+                if i + length <= len(words):
+                    candidate = ' '.join(words[i:i+length]).lower()
+                    if candidate in ALL_PRODUCTS_CACHE:
+                        items.append(candidate)
+                        i += length
+                        found = True
+                        break
+            
+            # Если не нашли комбинацию, проверяем, может быть следующее слово даст результат
+            if not found:
+                next_found = False
+                for length in [2, 1]:
+                    if i + 1 + length <= len(words):
+                        candidate = ' '.join(words[i+1:i+1+length]).lower()
+                        if candidate in ALL_PRODUCTS_CACHE:
+                            i += 1 + length
+                            next_found = True
+                            break
+                
+                if not next_found:
+                    items.append(words[i].lower())
+                    i += 1
+    
+    # Регулярное выражение для поиска количества и единицы измерения в конце строки
+    # (.+?)           - (Группа 1: Название) Любые символы, нежадно
+    # \s+             - Пробел
+    # (\d+\.?\d*)     - (Группа 2: Количество) Цифры, возможно с точкой
+    # \s*             - Опциональный пробел
+    # (\w+)?          - (Группа 3: Ед. изм.) Опциональное слово
+    # $               - Конец строки
+    pattern = re.compile(r"(.+?)\s+(\d+\.?\d*)\s*(\w+)?$")
+
+    for item in items:
+        match = pattern.match(item)
+        if match:
+            name = match.group(1).strip().lower()
+            try:
+                quantity = Decimal(match.group(2))
+                unit = match.group(3)
+                if unit:
+                    unit = unit.lower()
+            except InvalidOperation:
+                name = item.lower()
+                quantity = None
+                unit = None
+        else:
+            name = item.lower()
+            quantity = None
+            unit = None
+
+        standard_units = {"кг": (lambda x: x*1000, "г"), "л": (lambda x: x*1000, "мл"),
+                          "ст.л.": (lambda x: x*15, "г"), "ч.л.": (lambda x: x*5, "г"),
+                          "стакан": (lambda x: x*200, "г")}
+        if quantity and unit and unit in standard_units:
+            quantity = standard_units[unit][0](quantity)
+            unit = standard_units[unit][1]
+
+        parsed_products.append({'name': name, 'quantity': quantity, 'unit': unit})
+>>>>>>> origin/units
         
     return parsed_products
 

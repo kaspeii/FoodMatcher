@@ -362,6 +362,7 @@ def parse_products_with_quantity(text: str) -> list:
             'чайная ложка': 'ч.л.', 'чайные ложки': 'ч.л.', 'чайных ложек': 'ч.л.',
             'столовая ложка': 'ст.л.', 'столовые ложки': 'ст.л.', 'столовых ложек': 'ст.л.',
             'штука': 'шт', 'штуки': 'шт', 'штук': 'шт',
+            'щепотки': 'щепотка'
         }
 
         for old, new in normalization_map.items():
@@ -439,6 +440,12 @@ def parse_products_with_quantity(text: str) -> list:
             name = item.lower()
             quantity = None
             unit = None
+
+        standard_units = {"кг": (lambda x: x*1000, "г"), "л": (lambda x: x*1000, "мл"),
+                          "ст.л.": (lambda x: x*15, "г"), "ч.л.": (lambda x: x*5, "г")}
+        if quantity and unit and unit in standard_units:
+            quantity = standard_units[unit][0](quantity)
+            unit = standard_units[unit][1]
 
         parsed_products.append({'name': name, 'quantity': quantity, 'unit': unit})
         

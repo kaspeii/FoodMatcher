@@ -6,7 +6,7 @@ import tempfile
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from dotenv import load_dotenv
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List, Dict, Any, Set
 
 from telegram import (InlineKeyboardButton, InlineKeyboardMarkup,
                     ReplyKeyboardMarkup, ReplyKeyboardRemove, Update)
@@ -388,160 +388,75 @@ def normalize_unit(unit_str: Optional[str]) -> Optional[str]:
     
     return UNIT_NORMALIZATION_MAP.get(processed_unit, processed_unit)
 
-def parse_products_with_quantity(text: str) -> list:
+def _is_number(s: str) -> bool:
+    """Проверяет, можно ли строку превратить в число."""
+    try:
+        Decimal(s.replace(',', '.'))
+        return True
+    except InvalidOperation:
+        return False
+
+def parse_products_with_quantity(text: str, all_product_names: Set[str]) -> List[Dict[str, Any]]:
     """
-    Парсит строку, извлекая название, количество и единицу измерения.
-    Корректно обрабатывает множественные записи без запятых и многословные названия.
+    Разбирает строку, используя словарь известных продуктов для корректного
+    определения границ названий.
     """
-    processed_text = text.replace(',', ' ').strip()
+    # 1. Подготовка и токенизация
+    processed_text = text.lower().replace(',', ' ')
+    # Это одно выражение, состоящее из двух частей, соединенных оператором | (ИЛИ):
+    #
+    # 1. (?<=[а-я])(?=\d) - находит границу "буква, а затем цифра".
+    #    (?<=[а-я]) - "Просмотр назад": проверяет, что слева от текущей позиции есть буква, не захватывая её.
+    #    (?=\d)     - "Просмотр вперед": проверяет, что справа от текущей позиции есть цифра, не захватывая её.
+    #
+    # 2. (?<=\d)(?=[а-я]) - находит границу "цифра, а затем буква".
+    #    (?<=\d)     - Проверяет, что слева стоит цифра.
+    #    (?=[а-я]) - Проверяет, что справа стоит буква.
+    #
+    # Поскольку выражение находит только "нулевую" границу между символами, а не сами символы,
+    # замена на ' ' просто вставляет пробел в эту позицию.
+    processed_text = re.sub(r'(?<=[а-я])(?=\d)|(?<=\d)(?=[а-я])', r' ', processed_text)
+    tokens = processed_text.split()
     
-    # Регулярное выражение для поиска блоков "название + количество + единица"
-    # ([^\d\s]+(?:\s+[^\d\s]+)*) - Группа 1: Название.
-    #                                 Захватывает одно или несколько слов подряд,
-    #                                 пока не встретит цифру.
-    # \s+                             - Пробел между названием и количеством.
-    # (\d+[\.,]?\d*)                  - Группа 2: Количество.
-    # \s*                             - Опциональный пробел.
-    # ([а-яА-Я.]*)?                   - Группа 3: Единица измерения (опционально).
-    pattern = re.compile(r"([^\d\s]+(?:\s+[^\d\s]+)*)\s+(\d+[\.,]?\d*)\s*([а-яА-Я.]*)?")
-    
-    matches = pattern.findall(processed_text)
+    # Сортируем известные продукты по количеству слов в названии (от длинных к коротким).
+    known_products_sorted = sorted(
+        list(all_product_names), 
+        key=lambda p: len(p.split()), 
+        reverse=True
+    )
     
     parsed_products = []
-<<<<<<< HEAD
-    found_substrings = set()
-
-    for match in matches:
-        # match[0] будет содержать полное многословное название
-        name = match[0].strip()
-        quantity_str = match[1].replace(',', '.')
-        raw_unit = match[2]
+    i = 0
+    while i < len(tokens):
+        found_product = None
         
-        full_match_str = ' '.join(filter(None, match))
-        found_substrings.add(full_match_str.strip())
-        found_substrings.add(f"{name} {match[1]}".strip())
-
-        try:
-            quantity = Decimal(quantity_str)
-            unit = normalize_unit(raw_unit)
-            
-            parsed_products.append({'name': name.lower(), 'quantity': quantity, 'unit': unit})
-        except InvalidOperation:
-            continue
-
-    # Поиск продуктов без количества
-    temp_text = processed_text
-    for found in sorted(found_substrings, key=len, reverse=True):
-        temp_text = temp_text.replace(found, '')
+        # 2. Поиск самого длинного совпадения продукта в текущей позиции
+        for product_name in known_products_sorted:
+            name_parts = product_name.split()
+            if tokens[i : i + len(name_parts)] == name_parts:
+                found_product = product_name
+                i += len(name_parts) 
+                break
         
-    remaining_words = [word.strip() for word in temp_text.split() if word.strip()]
-    for name in remaining_words:
-        if not name.isnumeric() and name not in UNIT_NORMALIZATION_MAP.values():
-             parsed_products.append({'name': name.lower(), 'quantity': None, 'unit': None})
-=======
-
-    # Заменяем единицы измерения
-    def normalize_ingredient(input_text):
-        """Нормализация пользовательского ввода"""
-        normalization_map = {
-            'грамм': 'г', 'граммов': 'г', 'гр': 'г',
-            'килограмм': 'кг', 'килограммов': 'кг', 'кг.': 'кг',
-            'миллилитр': 'мл', 'миллилитров': 'мл', 'мл.': 'мл',
-            'литр': 'л', 'литров': 'л', 'л.': 'л',
-            'стакан': 'ст.', 'стакана': 'ст.', 'стаканов': 'ст.',
-            'ложка': 'ст.л.', 'ложки': 'ст.л.', 'ложек': 'ст.л.',
-            'чайная ложка': 'ч.л.', 'чайные ложки': 'ч.л.', 'чайных ложек': 'ч.л.',
-            'столовая ложка': 'ст.л.', 'столовые ложки': 'ст.л.', 'столовых ложек': 'ст.л.',
-            'штука': 'шт', 'штуки': 'шт', 'штук': 'шт',
-            'щепотки': 'щепотка'
-        }
-
-        for old, new in normalization_map.items():
-            input_text = input_text.replace(old, new)
-
-        return input_text
-    text = normalize_ingredient(text)
-    
-    # Если есть запятые, разделяем по запятым
-    if ',' in text:
-        items = [item.strip() for item in text.split(',') if item.strip()]
-    else:
-        words = text.strip().split()
-        items = []
-        i = 0
-        
-        while i < len(words):
-            if re.match(r'^\d+\.?\d*$', words[i]):
-                if i + 1 < len(words) and len(words[i + 1]) <= 5:
-                    i += 2
-                    continue
-                else:
-                    i += 1
-                    continue
-            
-            # Пытаемся найти продукт, начиная с самых длинных комбинаций (3, 2, 1 слово)
-            found = False
-            for length in [3, 2, 1]:
-                if i + length <= len(words):
-                    candidate = ' '.join(words[i:i+length]).lower()
-                    if candidate in ALL_PRODUCTS_CACHE:
-                        items.append(candidate)
-                        i += length
-                        found = True
-                        break
-            
-            # Если не нашли комбинацию, проверяем, может быть следующее слово даст результат
-            if not found:
-                next_found = False
-                for length in [2, 1]:
-                    if i + 1 + length <= len(words):
-                        candidate = ' '.join(words[i+1:i+1+length]).lower()
-                        if candidate in ALL_PRODUCTS_CACHE:
-                            i += 1 + length
-                            next_found = True
-                            break
-                
-                if not next_found:
-                    items.append(words[i].lower())
-                    i += 1
-    
-    # Регулярное выражение для поиска количества и единицы измерения в конце строки
-    # (.+?)           - (Группа 1: Название) Любые символы, нежадно
-    # \s+             - Пробел
-    # (\d+\.?\d*)     - (Группа 2: Количество) Цифры, возможно с точкой
-    # \s*             - Опциональный пробел
-    # (\w+)?          - (Группа 3: Ед. изм.) Опциональное слово
-    # $               - Конец строки
-    pattern = re.compile(r"(.+?)\s+(\d+\.?\d*)\s*(\w+)?$")
-
-    for item in items:
-        match = pattern.match(item)
-        if match:
-            name = match.group(1).strip().lower()
-            try:
-                quantity = Decimal(match.group(2))
-                unit = match.group(3)
-                if unit:
-                    unit = unit.lower()
-            except InvalidOperation:
-                name = item.lower()
-                quantity = None
-                unit = None
-        else:
-            name = item.lower()
+        if found_product:
+            # 3. Мы нашли продукт. Теперь ищем для него количество и единицу.
             quantity = None
             unit = None
-
-        standard_units = {"кг": (lambda x: x*1000, "г"), "л": (lambda x: x*1000, "мл"),
-                          "ст.л.": (lambda x: x*15, "г"), "ч.л.": (lambda x: x*5, "г"),
-                          "стакан": (lambda x: x*200, "г")}
-        if quantity and unit and unit in standard_units:
-            quantity = standard_units[unit][0](quantity)
-            unit = standard_units[unit][1]
-
-        parsed_products.append({'name': name, 'quantity': quantity, 'unit': unit})
->>>>>>> origin/units
-        
+            
+            if i < len(tokens) and _is_number(tokens[i]):
+                quantity = Decimal(tokens[i].replace(',', '.'))
+                i += 1 
+                
+                if i < len(tokens):
+                    normalized = normalize_unit(tokens[i])
+                    if normalized != tokens[i].lower() or normalized in ['г', 'кг', 'л', 'мл', 'шт']:
+                        unit = normalized
+                        i += 1
+            
+            parsed_products.append({'name': found_product, 'quantity': quantity, 'unit': unit})
+        else:
+            i += 1
+            
     return parsed_products
 
 def convert_to_standard_unit(quantity: Decimal, unit: Optional[str], product_info: dict) -> Tuple[Optional[Decimal], Optional[str]]:
@@ -596,7 +511,7 @@ async def add_products(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     
     user_id = update.message.from_user.id
     
-    parsed_input = parse_products_with_quantity(text)
+    parsed_input = parse_products_with_quantity(text, set(ALL_PRODUCTS_CACHE.keys()))
     if not parsed_input:
         await update.message.reply_text("Пожалуйста, введите названия продуктов.")
         return await manage_storage(update, context)

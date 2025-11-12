@@ -5,3 +5,5 @@ vosk
 pydub
 requests
 groq
+thefuzz
+python-Levenshtein

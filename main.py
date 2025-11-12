@@ -15,12 +15,26 @@ from telegram.ext import (Application, CallbackQueryHandler, CommandHandler,
 from vosk import Model, KaldiRecognizer
 import wave
 from pydub import AudioSegment
+from groq import AsyncGroq
+
+class SetEncoder(json.JSONEncoder):
+    """
+    Кастомный JSON-кодировщик, который преобразует множества (set) в списки (list).
+    """
+    def default(self, obj):
+        if isinstance(obj, set):
+            return list(obj)
+        return json.JSONEncoder.default(self, obj)
 
 # --- НАСТРОЙКА И КОНСТАНТЫ ---
 
 # Загрузка токена с поддержкой .env файла
 load_dotenv() 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY") 
+
+# Инициализация клиента Groq
+groq_client = AsyncGroq(api_key=GROQ_API_KEY)
 
 # Логгинг
 logging.basicConfig(
@@ -589,7 +603,7 @@ async def prompt_for_time(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     )
     return FILTER_BY_TIME
 
-def _calculate_preference_score(recipe: dict, preferences: dict) -> int:
+# def _calculate_preference_score(recipe: dict, preferences: dict) -> int:
     """Вспомогательная функция для подсчета 'очков' рецепта для сортировки."""
     score = 0
     recipe_ingredients = {ing.lower() for ing in recipe.get('ingredients', {}).keys()}
@@ -612,8 +626,8 @@ def _parse_recipe_quantity(description: str) -> Decimal | None:
             return None
     return None
 
-# БУДЕТ ЗАМЕНЕНО НА ВЫЗОВ LLM
-def find_matching_recipes(user_products: dict, user_equipment: set, forbidden_products: set, recipe_type: str, max_time: int, all_recipes: list) -> list:
+
+# def find_matching_recipes(user_products: dict, user_equipment: set, forbidden_products: set, recipe_type: str, max_time: int, all_recipes: list) -> list:
     """
     Логика поиска рецептов с учетом количества продуктов. (БУДЕТ ЗАМЕНЕНО ВЫЗОВОМ LLM)
     """
@@ -670,6 +684,135 @@ def find_matching_recipes(user_products: dict, user_equipment: set, forbidden_pr
 
     return matched_recipes
 
+# ПЕРЕНЕСТИ НА СТОРОНУ БД
+def preliminary_filter_recipes(user_products: dict, recipe_type: str, max_time: int, all_recipes: list) -> list:
+    """
+    Предварительная фильтрация рецептов по жестким критериям, которые легко проверить кодом:
+    - Нехватка ингредиентов (в зависимости от выбора пользователя)
+    - Максимальное время приготовления
+    """
+    matched_recipes = []
+    
+    for recipe in all_recipes:
+        # 1. Фильтр по нехватке продуктов
+        recipe_ingredients = recipe.get("ingredients", {})
+        missing_ingredients = []
+
+        for required_name, required_desc in recipe_ingredients.items():
+            required_name = required_name.lower()
+            
+            if required_name not in user_products:
+                missing_ingredients.append(required_name)
+                continue
+
+            user_has = user_products[required_name]
+            user_quantity = user_has.get('quantity')
+
+            if user_quantity is None:
+                continue
+
+            required_quantity = _parse_recipe_quantity(required_desc)
+
+            if required_quantity is None:
+                continue
+            
+            if user_quantity < required_quantity:
+                missing_ingredients.append(required_name)
+        
+        if recipe_type == "Только из имеющихся продуктов" and missing_ingredients:
+            continue
+        if recipe_type == "Добавить 1-2 недостающих ингредиента" and len(missing_ingredients) > 2:
+            continue
+
+        # 2. Фильтр по времени
+        cooking_time = recipe.get("cooking_time_minutes", 0)
+        if max_time > 0 and cooking_time > max_time:
+            continue
+            
+        matched_recipes.append(recipe)
+
+    return matched_recipes
+
+
+async def filter_recipes_with_llm(recipes_to_filter: list, equipment_constraints: set, strict_constraints: set, soft_constraints: dict) -> list[str]:
+    """
+    Отправляет список рецептов и ограничения пользователя в LLM для фильтрации и сортировки.
+    Возвращает отсортированный список названий рецептов.
+    """
+    if not recipes_to_filter:
+        return []
+
+    preferences_text_parts = []
+    if soft_constraints.get('like'):
+        preferences_text_parts.append(f"Пользователь любит: {', '.join(soft_constraints['like'])}")
+    if soft_constraints.get('avoid'):
+        preferences_text_parts.append(f"Пользователь НЕ любит: {', '.join(soft_constraints['avoid'])}")
+    preferences_text = ". ".join(preferences_text_parts) if preferences_text_parts else "Нет особых предпочтений."
+
+    recipes_json = json.dumps(recipes_to_filter, ensure_ascii=False, indent=2, cls=SetEncoder)
+
+    prompt = f"""
+[ЗАДАЧА] Отфильтруй список рецептов по предпочтениям пользователя.
+
+[СТРОГИЕ ОГРАНИЧЕНИЯ - НЕЛЬЗЯ НАРУШАТЬ]:
+- Медицинские ограничения
+{list(strict_constraints)}
+- У пользователя есть только
+{list(equipment_constraints)}
+
+[ПРЕДПОЧТЕНИЯ - ЖЕЛАТЕЛЬНО УЧЕСТЬ]:
+{preferences_text}
+
+[ИНСТРУКЦИИ]:
+1. Сначала исключи все рецепты, нарушающие СТРОГИЕ ограничения
+2. Затем отсортируй оставшиеся по соответствию ПРЕДПОЧТЕНИЯМ по убыванию
+3. Верни JSON-объект с **единственным** ключом "recipes". Значением этого ключа должен быть массив, содержащий **названия** (поле "name") до 5 наиболее подходящих рецептов. Ответ должен быть строго в указанном формате JSON-объекта.
+Пример: {{"recipes": ["Название рецепта 1", "Название рецепта 2"]}}
+
+[СПИСОК РЕЦЕПТОВ ДЛЯ ФИЛЬТРАЦИИ]:
+{recipes_json}"""
+
+    try:
+        logger.info("Отправка запроса к LLM для фильтрации рецептов...")
+        completion = await groq_client.chat.completions.create(
+            model="openai/gpt-oss-20b",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Ты — ассистент, который фильтрует рецепты по правилам. Твой ответ — это всегда JSON-массив с названиями рецептов. Никакого другого текста."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            temperature=0.1,
+            max_tokens=1024,
+            response_format={"type": "json_object"},
+        )
+
+        response_content = completion.choices[0].message.content
+        logger.info(f"Ответ от LLM получен: {response_content}")
+
+        parsed_json = json.loads(response_content)
+        
+        # Ищем список внутри JSON
+        if isinstance(parsed_json, list):
+            recipe_names = parsed_json
+        elif isinstance(parsed_json, dict):
+            recipe_names = next((v for v in parsed_json.values() if isinstance(v, list)), [])
+        else:
+            recipe_names = []
+            
+        if not all(isinstance(name, str) for name in recipe_names):
+             logger.error("LLM вернула JSON, но он не является массивом строк.")
+             return []
+
+        return recipe_names
+
+    except Exception as e:
+        logger.error(f"Ошибка при обращении к LLM или парсинге ответа: {e}")
+        return []
 
 async def find_and_show_recipes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Шаг 3: Получает время, ищет, сортирует и отображает рецепты."""
@@ -680,28 +823,50 @@ async def find_and_show_recipes(update: Update, context: ContextTypes.DEFAULT_TY
         try:
             max_time = int(user_input)
         except (ValueError, TypeError):
-            await update.message.reply_text("Это не похоже на число. Пожалуйста, введите время в минутах (например, 30) или нажмите 'Неважно'.")
+            await update.message.reply_text("Это не похоже на число. Пожалуйста, введите время в минутах или нажмите 'Неважно'.")
             return FILTER_BY_TIME
     
     user_id = update.message.from_user.id
     
     user_products = db.get_user_products(user_id)
     user_equipment = db.get_user_equipment(user_id)
-    forbidden_products = db.get_user_food_constraints(user_id)
+    food_constraints = db.get_user_food_constraints(user_id)
     user_preferences = db.get_user_product_preferences(user_id)
     all_recipes = db.get_all_recipes()
     recipe_type = context.user_data.get("recipe_type")
     
-    recipes = find_matching_recipes(user_products, user_equipment, forbidden_products, recipe_type, max_time, all_recipes)
-    recipes.sort(key=lambda r: _calculate_preference_score(r, user_preferences), reverse=True)
+    pre_filtered_recipes = preliminary_filter_recipes(user_products, recipe_type, max_time, all_recipes)
+    # recipes.sort(key=lambda r: _calculate_preference_score(r, user_preferences), reverse=True)
 
-    await main_menu(update, context)
-
-    if not recipes:
+    if not pre_filtered_recipes:
+        await main_menu(update, context)
         await update.message.reply_text("К сожалению, подходящих рецептов не найдено.")
+        context.user_data.clear()
+        return ConversationHandler.END
+        
+    # 2. Финальная фильтрация и сортировка с помощью LLM
+    final_recipe_names = await filter_recipes_with_llm(
+        recipes_to_filter=pre_filtered_recipes,
+        equipment_constraints=user_equipment,
+        strict_constraints=food_constraints,
+        soft_constraints=user_preferences
+    )
+    
+    await main_menu(update, context) 
+
+    if not final_recipe_names:
+        await update.message.reply_text("К сожалению, не удалось подобрать рецепты по твоим ограничениям.")
     else:
+        recipes_map = {recipe['name']: recipe for recipe in pre_filtered_recipes}
+        final_recipes = [recipes_map[name] for name in final_recipe_names if name in recipes_map]
+
+        if not final_recipes:
+            await update.message.reply_text("Произошла ошибка при сопоставлении рецептов. Попробуй еще раз.")
+            context.user_data.clear()
+            return ConversationHandler.END
+
         keyboard = []
-        for recipe in recipes[:15]: # Ограничиваем вывод
+        for recipe in final_recipes: 
             button = [InlineKeyboardButton(recipe["name"], callback_data=f"recipe_{recipe['id']}")]
             keyboard.append(button)
             

@@ -1,0 +1,25 @@
+-- Как создать базу
+
+Зайдите в постгрес 
+
+psql -U postgres
+
+(Введите пароль)
+
+Внутри psql создайте базу данных 
+
+CREATE DATABASE foodmatcher;
+
+Примените скрипт для создания структуры. Не забудьте указать путь до скрипта
+
+psql -U fooduser -d foodmatcher -f init.sql
+
+Внесите данные из дампа
+
+pg_restore -U fooduser -d foodmatcher foodmatcher.dump
+
+Готово
+
+можете протестировать 
+
+psql -U fooduser -d foodmatcher -c "SELECT COUNT(*) FROM recipes;"

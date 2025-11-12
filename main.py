@@ -7,6 +7,8 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from dotenv import load_dotenv
 from typing import Optional, Tuple, List, Dict, Any, Set
+from globals import *
+from thefuzz import process
 
 from telegram import (InlineKeyboardButton, InlineKeyboardMarkup,
                     ReplyKeyboardMarkup, ReplyKeyboardRemove, Update)
@@ -65,37 +67,6 @@ VOSK_MODEL = None
     ADD_PREFERENCE, ADD_CONSTRAINT, 
     CHOOSE_DELETE_TYPE, AWAIT_PREFERENCE_DELETION, AWAIT_CONSTRAINT_DELETION
 ) = range(14)
-
-# Словарь для нормализации значений
-UNIT_NORMALIZATION_MAP = {
-    'грамм': 'г', 'граммов': 'г', 'гр': 'г', 'грамма': 'г','грам': 'г', 'грамов': 'г', 'гр': 'г', 'грама': 'г','гр.': 'г','г.': 'г',
-    'килограмм': 'кг', 'килограммов': 'кг','килограмма': 'кг','килограм': 'кг', 'килограмов': 'кг','килограма': 'кг','кило': 'кг','килог': 'кг','кграмм': 'кг','кграмма': 'кг','кграммов': 'кг','кграм': 'кг','кграма': 'кг','кграмов': 'кг',
-    'миллилитр': 'мл', 'миллилитров': 'мл', 'миллилитра': 'мл','милилитр': 'мл', 'милилитров': 'мл', 'милилитра': 'мл','млитр': 'мл', 'милил': 'мл', 'млитра': 'мл', 'млитров': 'мл',
-    'литр': 'л', 'литров': 'л', 'литра': 'л','л.': 'л',
-    'столовая ложка': 'ст.л.', 'столовые ложки': 'ст.л.','столовых ложек': 'ст.л.', 'ст л': 'ст.л.', 'ст. ложка': 'ст.л.','ст. ложки': 'ст.л.','ст. ложек': 'ст.л.','ст.л': 'ст.л.','ст. л': 'ст.л.','ст. л.': 'ст.л.','ложка': 'ст.л.', 'ложки': 'ст.л.', 'ложек': 'ст.л.',
-    'чайная ложка': 'ч.л.', 'чайные ложки': 'ч.л.', 'ч л': 'ч.л.', 'ч. ложка': 'ч.л.', 'ч. ложки': 'ч.л.', 'ч.л': 'ч.л.', 'ч. л': 'ч.л.', 'ч. л.': 'ч.л.',
-    'стакан': 'ст', 'стакана': 'ст', 'стаканов': 'ст','ст.': 'ст',
-    'штука': 'шт', 'штуки': 'шт', 'штук': 'шт', 'шт.': 'шт',
-    'щепотки': 'щепотка'
-}
-
-# Карта конверсии: [пользовательская единица] -> (множитель, базовый тип)
-# Базовые типы: 'g' (масса), 'ml' (объем), 'pc' (штуки)
-CONVERSION_FACTORS = {
-    # Масса
-    'г':    (Decimal('1'), 'g'),
-    'кг':   (Decimal('1000'), 'g'),
-    # Объем
-    'мл':   (Decimal('1'), 'ml'),
-    'л':    (Decimal('1000'), 'ml'),
-    # Приблизительные/условные конверсии
-    'ст.л': (Decimal('15'), 'g'), # ст. ложка ~ 15г сахара/соли
-    'ч.л':  (Decimal('5'), 'g'),  # ч. ложка ~ 5г
-    'ст':   (Decimal('200'), 'g'), # стакан ~ 200г
-    # Штуки
-    'шт':   (Decimal('1'), 'pc'),
-}
-
 
 # --- ФУНКЦИИ ДЛЯ РАБОТЫ С ГОЛОСОВЫМИ СООБЩЕНИЯМИ ---
 
@@ -396,7 +367,7 @@ def _is_number(s: str) -> bool:
     except InvalidOperation:
         return False
 
-def parse_products_with_quantity(text: str, all_product_names: Set[str]) -> List[Dict[str, Any]]:
+def parse_products_with_quantity(text: str, all_product_names: Set[str], score_cutoff: int = 85) -> List[Dict[str, Any]]:
     """
     Разбирает строку, используя словарь известных продуктов для корректного
     определения границ названий.
@@ -417,39 +388,42 @@ def parse_products_with_quantity(text: str, all_product_names: Set[str]) -> List
     # замена на ' ' просто вставляет пробел в эту позицию.
     processed_text = re.sub(r'(?<=[а-я])(?=\d)|(?<=\d)(?=[а-я])', r' ', processed_text)
     tokens = processed_text.split()
-    
-    # Сортируем известные продукты по количеству слов в названии (от длинных к коротким).
-    known_products_sorted = sorted(
-        list(all_product_names), 
-        key=lambda p: len(p.split()), 
-        reverse=True
-    )
-    
+        
     parsed_products = []
     i = 0
     while i < len(tokens):
-        found_product = None
+        best_match = None
+        best_score = 0
+        tokens_consumed = 0
         
-        # 2. Поиск самого длинного совпадения продукта в текущей позиции
-        for product_name in known_products_sorted:
-            name_parts = product_name.split()
-            if tokens[i : i + len(name_parts)] == name_parts:
-                found_product = product_name
-                i += len(name_parts) 
+        # 2. Поиск наилучшего многословного совпадения с опечатками
+        current_candidate = ""
+        for j in range(i, len(tokens)):
+            current_candidate = (current_candidate + " " + tokens[j]).strip()
+            
+            if _is_number(tokens[j]):
                 break
-        
-        if found_product:
-            # 3. Мы нашли продукт. Теперь ищем для него количество и единицу.
+
+            match, score = process.extractOne(current_candidate, all_product_names)
+            
+            if score > best_score:
+                best_score = score
+                best_match = match
+                tokens_consumed = j - i + 1
+
+        # 3. Принятие решения на основе лучшего найденного совпадения
+        if best_score >= score_cutoff:
+            found_product = best_match
+            i += tokens_consumed
+            
             quantity = None
             unit = None
-            
             if i < len(tokens) and _is_number(tokens[i]):
                 quantity = Decimal(tokens[i].replace(',', '.'))
-                i += 1 
-                
+                i += 1
                 if i < len(tokens):
                     normalized = normalize_unit(tokens[i])
-                    if normalized != tokens[i].lower() or normalized in ['г', 'кг', 'л', 'мл', 'шт']:
+                    if normalized != tokens[i] or normalized in ['г', 'кг', 'л', 'мл', 'шт']:
                         unit = normalized
                         i += 1
             
@@ -545,9 +519,9 @@ async def add_products(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 
         if existing_product and existing_product['quantity'] is not None and new_quantity is not None:
             final_quantity = existing_product['quantity'] + new_quantity
+            report_updated.append({'name': name, 'quantity': final_quantity, 'unit': new_unit})
             products_to_upsert.append({'name': name, 'quantity': final_quantity, 'unit': new_unit})
         else:
-            # Добавляем новый продукт
             report_added.append(f"{name} ({f'{new_quantity} {new_unit}' if new_quantity is not None else 'количество не указано'})")
             products_to_upsert.append({'name': name, 'quantity': new_quantity, 'unit': new_unit})
 
@@ -557,7 +531,7 @@ async def add_products(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 
     response_parts = []
     if report_added:
-        response_parts.append(f"✅ Добавлено/обновлено: {', '.join(report_added)}.")
+        response_parts.append(f"✅ Добавлено: {', '.join(report_added)}.")
     if report_updated:
         response_parts.append(f"🔄 Количество увеличено: {', '.join(report_updated)}.")
     if report_invalid:

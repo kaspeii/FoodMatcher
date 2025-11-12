@@ -1,333 +1,691 @@
-# db.py (Тестовая имитация / Mock)
+# db.py
+import os
+import psycopg2
+from psycopg2.extras import DictCursor, execute_batch
+from dotenv import load_dotenv
 import logging
 from decimal import Decimal
 
-# --- Настройка логирования ---
+# Загрузка переменных окружения
+load_dotenv()
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+# Настройка логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- ИМИТАЦИЯ БАЗЫ ДАННЫХ В ПАМЯТИ ---
-
-# --- Справочники ---
-
-# Категории продуктов
-_categories = {
-    1: 'молочные продукты',
-    2: 'овощи',
-    3: 'фрукты',
-    4: 'мясо',
-    5: 'бакалея',
-    6: 'напитки',
-    7: 'хлебобулочные изделия',
-    8: 'морепродукты'
-}
-
-# Продукты с привязкой к категориям
-_products = {
-    # id: { name, category_id, per_unit, calories, ... }
-    1: {'name': 'яйцо', 'category_id': 1, 'per_unit': '1pc', 'calories': Decimal('70'), 'protein': Decimal('6'), 'fat': Decimal('5'), 'carbs': Decimal('0.5')},
-    2: {'name': 'молоко', 'category_id': 1, 'per_unit': '100ml', 'calories': Decimal('60'), 'protein': Decimal('3.5'), 'fat': Decimal('3.2'), 'carbs': Decimal('4.8')},
-    3: {'name': 'соль', 'category_id': 5, 'per_unit': '100g', 'calories': Decimal('0'), 'protein': Decimal('0'), 'fat': Decimal('0'), 'carbs': Decimal('0')},
-    4: {'name': 'растительное масло', 'category_id': 5, 'per_unit': '100g', 'calories': Decimal('884'), 'protein': Decimal('0'), 'fat': Decimal('100'), 'carbs': Decimal('0')},
-    5: {'name': 'помидоры', 'category_id': 2, 'per_unit': '100g', 'calories': Decimal('18'), 'protein': Decimal('0.9'), 'fat': Decimal('0.2'), 'carbs': Decimal('3.9')},
-    6: {'name': 'огурцы', 'category_id': 2, 'per_unit': '100g', 'calories': Decimal('15'), 'protein': Decimal('0.7'), 'fat': Decimal('0.1'), 'carbs': Decimal('3.6')},
-    7: {'name': 'красный лук', 'category_id': 2, 'per_unit': '100g', 'calories': Decimal('40'), 'protein': Decimal('1.1'), 'fat': Decimal('0.1'), 'carbs': Decimal('9.3')},
-    8: {'name': 'фета', 'category_id': 1, 'per_unit': '100g', 'calories': Decimal('264'), 'protein': Decimal('14'), 'fat': Decimal('21'), 'carbs': Decimal('4.1')},
-    9: {'name': 'оливки', 'category_id': 2, 'per_unit': '100g', 'calories': Decimal('115'), 'protein': Decimal('0.8'), 'fat': Decimal('11'), 'carbs': Decimal('6')},
-    10: {'name': 'оливковое масло', 'category_id': 5, 'per_unit': '100g', 'calories': Decimal('884'), 'protein': Decimal('0'), 'fat': Decimal('100'), 'carbs': Decimal('0')},
-    11: {'name': 'куриная грудка', 'category_id': 4, 'per_unit': '100g', 'calories': Decimal('165'), 'protein': Decimal('31'), 'fat': Decimal('3.6'), 'carbs': Decimal('0')},
-    12: {'name': 'рис', 'category_id': 5, 'per_unit': '100g', 'calories': Decimal('130'), 'protein': Decimal('2.7'), 'fat': Decimal('0.3'), 'carbs': Decimal('28')},
-    13: {'name': 'соевый соус', 'category_id': 5, 'per_unit': '100g', 'calories': Decimal('53'), 'protein': Decimal('8'), 'fat': Decimal('0.6'), 'carbs': Decimal('5.6')},
-    14: {'name': 'овощи', 'category_id': 2, 'per_unit': '100g', 'calories': Decimal('65'), 'protein': Decimal('2.9'), 'fat': Decimal('0.4'), 'carbs': Decimal('14')},
-    15: {'name': 'кабачок', 'category_id': 2, 'per_unit': '100g', 'calories': Decimal('17'), 'protein': Decimal('1.2'), 'fat': Decimal('0.3'), 'carbs': Decimal('3.1')},
-    16: {'name': 'баклажан', 'category_id': 2, 'per_unit': '100g', 'calories': Decimal('25'), 'protein': Decimal('1'), 'fat': Decimal('0.2'), 'carbs': Decimal('6')},
-    17: {'name': 'лук', 'category_id': 2, 'per_unit': '100g', 'calories': Decimal('40'), 'protein': Decimal('1.1'), 'fat': Decimal('0.1'), 'carbs': Decimal('9.3')},
-    18: {'name': 'морковь', 'category_id': 2, 'per_unit': '100g', 'calories': Decimal('41'), 'protein': Decimal('0.9'), 'fat': Decimal('0.2'), 'carbs': Decimal('10')},
-    19: {'name': 'чеснок', 'category_id': 2, 'per_unit': '100g', 'calories': Decimal('149'), 'protein': Decimal('6'), 'fat': Decimal('0.5'), 'carbs': Decimal('33')},
-    20: {'name': 'томатная паста', 'category_id': 5, 'per_unit': '100g', 'calories': Decimal('82'), 'protein': Decimal('4.3'), 'fat': Decimal('0.5'), 'carbs': Decimal('19')},
-    21: {'name': 'хлеб', 'category_id': 7, 'per_unit': '100g', 'calories': Decimal('265'), 'protein': Decimal('9'), 'fat': Decimal('3.2'), 'carbs': Decimal('49')},
-    22: {'name': 'сыр', 'category_id': 1, 'per_unit': '100g', 'calories': Decimal('402'), 'protein': Decimal('25'), 'fat': Decimal('33'), 'carbs': Decimal('1.3')},
-    23: {'name': 'картофель', 'category_id': 2, 'per_unit': '100g', 'calories': Decimal('77'), 'protein': Decimal('2'), 'fat': Decimal('0.1'), 'carbs': Decimal('17')},
-    24: {'name': 'арахис', 'category_id': 5, 'per_unit': '100g', 'calories': Decimal('567'), 'protein': Decimal('26'), 'fat': Decimal('49'), 'carbs': Decimal('16')},
-    25: {'name': 'креветки', 'category_id': 8, 'per_unit': '100g', 'calories': Decimal('99'), 'protein': Decimal('24'), 'fat': Decimal('0.3'), 'carbs': Decimal('0.2')},
-    26: {'name': 'гречка', 'category_id': 7, 'per_unit': '100g', 'calories': Decimal('343'), 'protein': Decimal('13'), 'fat': Decimal('3.4'), 'carbs': Decimal('72')},
-}
-
-# Для удобства создадим обратные маппинги и множества
-_product_name_to_id = {v['name']: k for k, v in _products.items()}
-_existing_product_names = set(_product_name_to_id.keys())
-
-# Оборудование
-_equipment = {
-    1: 'сковорода',
-    2: 'венчик',
-    3: 'миска',
-    4: 'нож',
-    5: 'кастрюля',
-    6: 'духовка',
-    7: 'блендер',
-    8: 'мультиварка',
-}
-_equipment_name_to_id = {v: k for k, v in _equipment.items()}
-_existing_equipment_names = set(_equipment_name_to_id.keys())
-
-
-# Рецепты
-_recipes = [
-    {
-        "id": 1,
-        "name": "Классический омлет",
-        "description": "Простой и быстрый завтрак.",
-        "ingredients": {"яйцо": "3 шт", "молоко": "50 мл", "соль": "по вкусу", "растительное масло": "1 ст.л."},
-        "instructions": "1. Взбейте яйцо с молоком и солью. 2. Разогрейте сковороду с маслом. 3. Вылейте яичную смесь и готовьте до готовности.",
-        "equipment": "Сковорода, венчик",
-        "cooking_time_minutes": 10,
-        "tags": {'завтрак', 'быстро', 'вегетарианское'},
-    },
-    {
-        "id": 2,
-        "name": "Греческий салат",
-        "description": "Свежий и легкий салат.",
-        "ingredients": {"помидоры": "2 шт", "огурцы": "1 шт", "красный лук": "0.5 шт", "фета": "100 г", "оливки": "50 г", "оливковое масло": "2 ст.л."},
-        "instructions": "1. Нарежьте овощи. 2. Добавьте фету и оливки. 3. Заправьте оливковым маслом.",
-        "equipment": "Миска, нож",
-        "cooking_time_minutes": 15,
-        "tags": {'салат', 'быстро', 'вегетарианское', 'лето'},
-    },
-    {
-        "id": 3,
-        "name": "Куриная грудка с рисом",
-        "description": "Полноценный обед.",
-        "ingredients": {"куриная грудка": "200 г", "рис": "100 г", "соевый соус": "30 мл", "овощи": "150 г"},
-        "instructions": "1. Отварите рис. 2. Обжарьте куриную грудку с овощами. 3. Добавьте соевый соус и потушите пару минут.",
-        "equipment": "Сковорода, кастрюля",
-        "cooking_time_minutes": 30,
-        "tags": {'обед', 'основное блюдо', 'курица'},
-    },
-    {
-        "id": 4,
-        "name": "Овощное рагу",
-        "description": "Сытное веганское блюдо.",
-        "ingredients": {"кабачок": "1 шт", "баклажан": "1 шт", "помидоры": "2 шт", "лук": "1 шт", "морковь": "1 шт", "чеснок": "2 зубчика", "томатная паста": "2 ст.л."},
-        "instructions": "1. Нарежьте все овощи кубиками. 2. Обжарьте лук и морковь. 3. Добавьте остальные овощи и томатную пасту. 4. Тушите до готовности.",
-        "equipment": "Глубокая сковорода или кастрюля",
-        "cooking_time_minutes": 40,
-        "tags": {'веганское', 'вегетарианское', 'рагу', 'овощи', 'основное блюдо'},
-    },
-    {
-        "id": 5,
-        "name": "Жареная картошка",
-        "description": "Просто и вкусно.",
-        "ingredients": {"картофель": "500 г", "лук": "1 шт", "растительное масло": "3 ст.л.", "соль": "по вкусу"},
-        "instructions": "1. Почистить и нарезать картофель и лук. 2. Разогреть масло на сковороде. 3. Жарить картофель до золотистой корочки, в конце добавить лук и соль.",
-        "equipment": "Сковорода",
-        "cooking_time_minutes": 25,
-        "tags": {'гарнир', 'просто', 'веганское', 'вегетарианское'},
-    }
-]
-_recipes_by_id = {recipe['id']: recipe for recipe in _recipes}
-
-# --- Данные пользователей ---
-
-# Счетчик для "auto-increment" ID
-_next_user_id = 1
-_next_preference_id = 1
-_next_constraint_id = 1
-
-# Таблица "users": { telegram_id: {'id': internal_id, 'first_name': 'John'} }
-_users = {}
-
-# Таблица "user_products" (Холодильник): { telegram_id: { 'продукт': {'quantity': Decimal, 'unit': 'str'} } }
-_user_products = {}
-
-# Таблица "user_equipment": { telegram_id: {equipment_id_1, equipment_id_2} }
-_user_equipment = {}
-
-# Таблица "user_preferences": { telegram_id: [ {'id': 1, 'note': 'люблю острое'}, ... ] }
-_user_preferences = {}
-
-# Таблица "user_food_constraints": { telegram_id: [{'product_id': int|None, 'category_id': int|None}, ...] }
-_user_food_constraints = {}
-
-
-# --- КОНЕЦ ИМИТАЦИИ БД ---
-
+def get_db_connection():
+    """Устанавливает соединение с базой данных."""
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        return conn
+    except psycopg2.OperationalError as e:
+        logger.error(f"Ошибка подключения к базе данных: {e}")
+        return None
 
 # --- Функции для работы с пользователями и их продуктами ---
 
 def ensure_user_exists(telegram_id: int, first_name: str):
-    """Имитация: создает пользователя со всеми связанными записями, если его нет."""
-    global _next_user_id
-    if telegram_id not in _users:
-        _users[telegram_id] = {'id': _next_user_id, 'first_name': first_name}
-        _user_products[telegram_id] = {}
-        _user_equipment[telegram_id] = set()
-        _user_food_constraints[telegram_id] = []
-        _user_preferences[telegram_id] = [] 
-        _next_user_id += 1
-        logger.info(f"Mock DB: Создан новый пользователь с telegram_id {telegram_id}")
+    """
+    Проверяет, есть ли пользователь в БД. Если нет - создает новую запись.
+    """
+    sql = """
+        INSERT INTO users (telegram_id, first_name)
+        VALUES (%s, %s)
+        ON CONFLICT (telegram_id) DO NOTHING;
+    """
+    conn = get_db_connection()
+    if conn:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (telegram_id, first_name))
+        conn.close()
 
 def get_user_products(telegram_id: int) -> dict:
-    """Имитация: возвращает словарь продуктов пользователя."""
-    ensure_user_exists(telegram_id, "Mock User")
-    logger.info(f"Mock DB: Запрошен холодильник для telegram_id {telegram_id}")
-    return _user_products.get(telegram_id, {})
+    """
+    Возвращает словарь продуктов пользователя с количеством и ед. измерения.
+    Формат: {'молоко': {'quantity': Decimal('1.0'), 'unit': 'л'}, 'хлеб': {'quantity': None, 'unit': None}}
+    """
+    sql = """
+        SELECT p.name, up.quantity, up.unit
+        FROM products p
+        JOIN user_products up ON p.id = up.product_id
+        JOIN users u ON u.id = up.user_id
+        WHERE u.telegram_id = %s;
+    """
+    products = {}
+    conn = get_db_connection()
+    if conn:
+        with conn:
+            with conn.cursor(cursor_factory=DictCursor) as cur:
+                cur.execute(sql, (telegram_id,))
+                for row in cur.fetchall():
+                    products[row['name']] = {
+                        'quantity': row['quantity'],
+                        'unit': row['unit']
+                    }
+        conn.close()
+    return products
 
 def get_user_equipment(telegram_id: int) -> set:
-    """Имитация: возвращает множество названий оборудования пользователя."""
-    ensure_user_exists(telegram_id, "Mock User")
-    logger.info(f"Mock DB: Запрошено оборудование для telegram_id {telegram_id}")
-    equipment_ids = _user_equipment.get(telegram_id, set())
-    return { _equipment[eq_id] for eq_id in equipment_ids }
+    """Возвращает множество названий оборудования пользователя."""
+    sql = """
+        SELECT e.name
+        FROM equipment e
+        JOIN user_equipment ue ON e.id = ue.equipment_id
+        JOIN users u ON u.id = ue.user_id
+        WHERE u.telegram_id = %s;
+    """
+    equipment = set()
+    conn = get_db_connection()
+    if conn:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (telegram_id,))
+                for row in cur.fetchall():
+                    equipment.add(row[0].lower())
+        conn.close()
+    return equipment
 
 def upsert_products_to_user(telegram_id: int, products_data: list):
     """
-    Имитация: пакетное добавление/обновление продуктов пользователя.
+    Пакетное добавление/обновление продуктов пользователя.
     products_data - список словарей: [{'name': str, 'quantity': Decimal, 'unit': str}]
     """
-    ensure_user_exists(telegram_id, "Mock User")
-    fridge = _user_products.get(telegram_id)
-    logger.info(f"Mock DB: UPSERT для telegram_id {telegram_id}, данные: {products_data}")
-
-    for p_data in products_data:
-        name = p_data['name'].lower()
-        if name in _existing_product_names:
-            fridge[name] = {
-                'quantity': p_data.get('quantity'),
-                'unit': p_data.get('unit')
-            }
+    sql = """
+        INSERT INTO user_products (user_id, product_id, quantity, unit)
+        VALUES (
+            (SELECT id FROM users WHERE telegram_id = %(telegram_id)s),
+            (SELECT id FROM products WHERE name = %(name)s),
+            %(quantity)s,
+            %(unit)s
+        )
+        ON CONFLICT (user_id, product_id) DO UPDATE SET
+            quantity = EXCLUDED.quantity,
+            unit = EXCLUDED.unit;
+    """
+    conn = get_db_connection()
+    if conn and products_data:
+        for p in products_data:
+            p['telegram_id'] = telegram_id
+        
+        with conn:
+            with conn.cursor() as cur:
+                execute_batch(cur, sql, products_data)
+        conn.close()
 
 def remove_products_from_user(telegram_id: int, product_names: list):
-    """Имитация: пакетное удаление продуктов пользователя."""
-    ensure_user_exists(telegram_id, "Mock User")
-    fridge = _user_products.get(telegram_id)
-    logger.info(f"Mock DB: DELETE для telegram_id {telegram_id}, продукты: {product_names}")
-
-    for name in product_names:
-        if name.lower() in fridge:
-            del fridge[name.lower()]
+    """Пакетное удаление продуктов пользователя по списку названий."""
+    sql = """
+        DELETE FROM user_products
+        WHERE user_id = (SELECT id FROM users WHERE telegram_id = %s)
+        AND product_id IN (SELECT id FROM products WHERE name = ANY(%s));
+    """
+    conn = get_db_connection()
+    if conn and product_names:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (telegram_id, product_names))
+        conn.close()
 
 def add_user_equipment(telegram_id: int, equipment_names: set):
-    """Имитация: добавляет оборудование пользователю."""
-    ensure_user_exists(telegram_id, "Mock User")
-    user_eq_set = _user_equipment.get(telegram_id)
-    logger.info(f"Mock DB: ADD EQUIPMENT для telegram_id {telegram_id}, оборудование: {equipment_names}")
-    
-    for name in equipment_names:
-        eq_id = _equipment_name_to_id.get(name.lower())
-        if eq_id:
-            user_eq_set.add(eq_id)
+    """Добавляет оборудование пользователю."""
+    sql = """
+        INSERT INTO user_equipment (user_id, equipment_id)
+        SELECT 
+            (SELECT id FROM users WHERE telegram_id = %s),
+            e.id
+        FROM equipment e WHERE e.name = ANY(%s)
+        ON CONFLICT (user_id, equipment_id) DO NOTHING;
+    """
+    conn = get_db_connection()
+    if conn and equipment_names:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (telegram_id, list(equipment_names)))
+        conn.close()
 
 def remove_user_equipment(telegram_id: int, equipment_names: set):
-    """Имитация: удаляет оборудование у пользователя."""
-    ensure_user_exists(telegram_id, "Mock User")
-    user_eq_set = _user_equipment.get(telegram_id)
-    logger.info(f"Mock DB: REMOVE EQUIPMENT для telegram_id {telegram_id}, оборудование: {equipment_names}")
-    
-    ids_to_remove = set()
-    for name in equipment_names:
-        eq_id = _equipment_name_to_id.get(name.lower())
-        if eq_id:
-            ids_to_remove.add(eq_id)
-            
-    user_eq_set.difference_update(ids_to_remove)
+    """Удаляет оборудование у пользователя."""
+    sql = """
+        DELETE FROM user_equipment
+        WHERE user_id = (SELECT id FROM users WHERE telegram_id = %s)
+        AND equipment_id IN (SELECT id FROM equipment WHERE name = ANY(%s));
+    """
+    conn = get_db_connection()
+    if conn and equipment_names:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (telegram_id, list(equipment_names)))
+        conn.close()
+
+# --- функции для предпочтений и ограничений ---
+
+def get_user_preferences_with_ids(telegram_id: int) -> list[dict]:
+    """Возвращает список предпочтений пользователя, каждое с его ID."""
+    sql = """
+        SELECT id, note FROM user_product_preferences
+        WHERE user_id = (SELECT id FROM users WHERE telegram_id = %s)
+        ORDER BY id;
+    """
+    notes = []
+    conn = get_db_connection()
+    if conn:
+        with conn:
+            with conn.cursor(cursor_factory=DictCursor) as cur:
+                cur.execute(sql, (telegram_id,))
+                notes = cur.fetchall()
+        conn.close()
+    return notes
+
+def get_user_food_constraints_with_ids(telegram_id: int) -> list[dict]:
+    """Возвращает список ограничений пользователя, каждое с его ID."""
+    sql = """
+        SELECT id, note FROM user_food_constraints
+        WHERE user_id = (SELECT id FROM users WHERE telegram_id = %s)
+        ORDER BY id;
+    """
+    notes = []
+    conn = get_db_connection()
+    if conn:
+        with conn:
+            with conn.cursor(cursor_factory=DictCursor) as cur:
+                cur.execute(sql, (telegram_id,))
+                notes = cur.fetchall()
+        conn.close()
+    return notes
+
+def add_user_preference(telegram_id: int, note: str):
+    """Добавляет новое текстовое предпочтение пользователю."""
+    sql = """
+        INSERT INTO user_product_preferences (user_id, note)
+        VALUES ((SELECT id FROM users WHERE telegram_id = %s), %s);
+    """
+    conn = get_db_connection()
+    if conn:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (telegram_id, note))
+        conn.close()
+
+def add_user_food_constraint(telegram_id: int, note: str):
+    """Добавляет новое текстовое ограничение пользователю."""
+    sql = """
+        INSERT INTO user_food_constraints (user_id, note)
+        VALUES ((SELECT id FROM users WHERE telegram_id = %s), %s);
+    """
+    conn = get_db_connection()
+    if conn:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (telegram_id, note))
+        conn.close()
+
+def delete_user_preferences_by_ids(telegram_id: int, note_ids: list[int]):
+    """Удаляет указанные предпочтения пользователя."""
+    if not note_ids:
+        return
+    sql = """
+        DELETE FROM user_product_preferences
+        WHERE user_id = (SELECT id FROM users WHERE telegram_id = %s) AND id = ANY(%s);
+    """
+    conn = get_db_connection()
+    if conn:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (telegram_id, note_ids))
+        conn.close()
+
+def delete_user_food_constraints_by_ids(telegram_id: int, note_ids: list[int]):
+    """Удаляет указанные ограничения пользователя."""
+    if not note_ids:
+        return
+    sql = """
+        DELETE FROM user_food_constraints
+        WHERE user_id = (SELECT id FROM users WHERE telegram_id = %s) AND id = ANY(%s);
+    """
+    conn = get_db_connection()
+    if conn:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (telegram_id, note_ids))
+        conn.close()
+
+def clear_user_preferences(telegram_id: int):
+    """Удаляет ВСЕ текстовые предпочтения пользователя (для команды "все")."""
+    sql = "DELETE FROM user_product_preferences WHERE user_id = (SELECT id FROM users WHERE telegram_id = %s);"
+    conn = get_db_connection()
+    if conn:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (telegram_id,))
+        conn.close()
+
+def clear_user_food_constraints(telegram_id: int):
+    """Удаляет ВСЕ текстовые ограничения пользователя (для команды "все")."""
+    sql = "DELETE FROM user_food_constraints WHERE user_id = (SELECT id FROM users WHERE telegram_id = %s);"
+    conn = get_db_connection()
+    if conn:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (telegram_id,))
+        conn.close()
 
 # --- Функции для работы с рецептами ---
 
 def get_all_recipes() -> list[dict]:
-    """Имитация: просто возвращает заранее подготовленный список _recipes."""
-    logger.info("Mock DB: Запрошены все рецепты")
-    return _recipes
+    """
+    Возвращает список всех рецептов из БД, собирая данные из связанных таблиц.
+    """
+    conn = get_db_connection()
+    if not conn:
+        return []
+
+    recipes = {}
+    with conn:
+        with conn.cursor(cursor_factory=DictCursor) as cur:
+            cur.execute("""
+                SELECT
+                    id,
+                    name,
+                    description,
+                    instructions,
+                    cooking_time_minutes,
+                    equipment_raw AS equipment
+                FROM recipes
+            """)
+            for row in cur.fetchall():
+                recipes[row['id']] = dict(row)
+                recipes[row['id']]['ingredients'] = {}
+                recipes[row['id']]['tags'] = set()
+
+            # 2. ингредиенты
+            cur.execute("""
+                SELECT ri.recipe_id, p.name, ri.quantity_description
+                FROM recipe_ingredients ri
+                JOIN products p ON ri.product_id = p.id
+            """)
+            for row in cur.fetchall():
+                if row['recipe_id'] in recipes:
+                    recipes[row['recipe_id']]['ingredients'][row['name']] = row['quantity_description']
+
+            # 3. теги
+            cur.execute("""
+                SELECT rt.recipe_id, t.name
+                FROM recipe_tags rt
+                JOIN tags t ON rt.tag_id = t.id
+            """)
+            for row in cur.fetchall():
+                if row['recipe_id'] in recipes:
+                    recipes[row['recipe_id']]['tags'].add(row['name'].lower())
+    conn.close()
+    
+    return list(recipes.values())
 
 def get_recipe_by_id(recipe_id: int) -> dict | None:
-    """Имитация: ищет рецепт в словаре _recipes_by_id."""
-    logger.info(f"Mock DB: Запрошен рецепт с ID {recipe_id}")
-    return _recipes_by_id.get(recipe_id)
+    """
+    Возвращает один рецепт по его ID со всеми связанными данными.
+    """
+    conn = get_db_connection()
+    if not conn:
+        return None
+
+    try:
+        with conn.cursor(cursor_factory=DictCursor) as cur:
+            # базовые данные
+            cur.execute(
+                """
+                SELECT
+                    id,
+                    name,
+                    description,
+                    instructions,
+                    cooking_time_minutes,
+                    equipment_raw AS equipment
+                FROM recipes
+                WHERE id = %s
+                """,
+                (recipe_id,),
+            )
+            record = cur.fetchone()
+            if not record:
+                return None
+
+            recipe = dict(record)
+            recipe["ingredients"] = {}
+            recipe["tags"] = set()
+
+            # ингредиенты
+            cur.execute(
+                """
+                SELECT p.name, ri.quantity_description
+                FROM recipe_ingredients ri
+                JOIN products p ON ri.product_id = p.id
+                WHERE ri.recipe_id = %s
+                """,
+                (recipe_id,),
+            )
+            for row in cur.fetchall():
+                recipe["ingredients"][row[0]] = row[1]
+
+            # теги
+            cur.execute(
+                """
+                SELECT t.name
+                FROM recipe_tags rt
+                JOIN tags t ON rt.tag_id = t.id
+                WHERE rt.recipe_id = %s
+                """,
+                (recipe_id,),
+            )
+            for row in cur.fetchall():
+                recipe["tags"].add(row[0].lower())
+
+        return recipe
+
+    finally:
+        conn.close()
 
 
 # --- Функции для получения справочников ---
 
 def load_products_cache() -> dict:
     """
-    Имитация: создает кэш с полной информацией о продуктах,
-    аналогично `load_products_cache_improved()` для реальной БД.
-    """
-    logger.info("Mock DB: Загружен полный кэш продуктов")
+    Загружает полную информацию о продуктах из БД для кэширования.
     
+    Возвращает словарь следующей структуры:
+    {
+        'название_продукта': {
+            'per_unit': '100g',
+            'calories': 150.00,
+            'protein': 5.50,
+            'fat': 2.30,
+            'carbs': 25.00,
+            'category_id': 1
+        },
+        ...
+    }
+    """
+    sql = "SELECT name, per_unit, calories, protein, fat, carbs, category_id FROM products;"
     products_cache = {}
-    for product_id, product_data in _products.items():
-        name = product_data['name'].lower()
-        # Создаем копию, чтобы не менять исходный мок
-        info = product_data.copy() 
-        # Удаляем имя, так как оно становится ключом
-        del info['name'] 
-        products_cache[name] = info
-        
+    conn = get_db_connection()
+    if conn:
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute(sql)
+                    rows = cur.fetchall()
+                    for row in rows:
+                        product_name = row[0].lower()
+                        
+                        products_cache[product_name] = {
+                            'per_unit': row[1],
+                            'calories': row[2],
+                            'protein': row[3],
+                            'fat': row[4],
+                            'carbs': row[5],
+                            'category_id': row[6]
+                        }
+        finally:
+            conn.close()
+            
     return products_cache
 
 def get_all_equipment_names() -> set:
-    """Имитация: возвращает set со всеми известными названиями оборудования."""
-    logger.info("Mock DB: Запрошен справочник всего оборудования")
-    return _existing_equipment_names
+    """Возвращает множество всех названий оборудования из справочника `equipment`."""
+    sql = "SELECT name FROM equipment;"
+    equipment_names = set()
+    conn = get_db_connection()
+    if conn:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(sql)
+                for row in cur.fetchall():
+                    equipment_names.add(row[0].lower())
+        conn.close()
+    return equipment_names
 
-def get_user_preferences_with_ids(telegram_id: int) -> dict:
-    """Имитация: возвращает список словарей предпочтений пользователя."""
-    ensure_user_exists(telegram_id, "Mock User")
-    logger.info(f"Mock DB: Запрошены предпочтения с ID для telegram_id {telegram_id}")
-    return _user_preferences.get(telegram_id)
 
-def get_user_food_constraints_with_ids(telegram_id: int) -> list[dict]:
-    """Имитация: возвращает список словарей ограничений пользователя."""
-    ensure_user_exists(telegram_id, "Mock User")
-    logger.info(f"Mock DB: Запрошены ограничения с ID для telegram_id {telegram_id}")
-    return _user_food_constraints.get(telegram_id, [])
+def preliminary_filter_recipes_db(
+    telegram_id: int,
+    recipe_type: str,
+    max_time: int = 0,
+) -> list[dict]:
+    """
+    Фильтруем рецепты прямо в Postgres:
+    - оставляем только те, что укладываются по времени (если задано)
+    - считаем, сколько ингредиентов у пользователя нет
+    - в зависимости от recipe_type отбрасываем лишние
 
-def add_user_preference(telegram_id: int, note: str):
-    """Имитация: добавляет новое текстовое предпочтение."""
-    global _next_preference_id
-    ensure_user_exists(telegram_id, "Mock User")
-    _user_preferences[telegram_id].append({'id': _next_preference_id, 'note': note})
-    logger.info(f"Mock DB: Добавлено предпочтение ID {_next_preference_id} для telegram_id {telegram_id}: '{note}'")
-    _next_preference_id += 1
+    recipe_type:
+        "Только из имеющихся продуктов" -> missing_count = 0
+        "Добавить 1-2 недостающих ингредиента" -> missing_count <= 2
+    """
+    conn = get_db_connection()
+    if not conn:
+        return []
 
-def add_user_food_constraint(telegram_id: int, note: str):
-    """Имитация: добавляет новое текстовое ограничение."""
-    global _next_constraint_id
-    ensure_user_exists(telegram_id, "Mock User")
-    _user_food_constraints[telegram_id].append({'id': _next_constraint_id, 'note': note})
-    logger.info(f"Mock DB: Добавлено ограничение ID {_next_constraint_id} для telegram_id {telegram_id}: '{note}'")
-    _next_constraint_id += 1
+    only_owned = (recipe_type == "Только из имеющихся продуктов")
+    allow_1_2 = (recipe_type == "Добавить 1-2 недостающих ингредиента")
 
-def delete_user_preferences_by_ids(telegram_id: int, note_ids: list[int]):
-    """Имитация: удаляет предпочтения по списку их ID."""
-    ensure_user_exists(telegram_id, "Mock User")
-    if not note_ids: return
+    sql = """
+    WITH user_inv AS (
+        -- что есть у пользователя
+        SELECT u.id AS user_id,
+               up.product_id,
+               up.quantity,
+               up.unit
+        FROM users u
+        JOIN user_products up ON up.user_id = u.id
+        WHERE u.telegram_id = %s
+    ),
+    recipe_need AS (
+        -- все ингредиенты всех рецептов, но сразу режем по времени
+        SELECT r.id AS recipe_id,
+               r.name,
+               r.description,
+               r.instructions,
+               r.cooking_time_minutes,
+               ri.product_id,
+               ri.quantity AS need_qty,
+               ri.unit     AS need_unit
+        FROM recipes r
+        JOIN recipe_ingredients ri ON ri.recipe_id = r.id
+        WHERE (%s = 0 OR r.cooking_time_minutes IS NULL OR r.cooking_time_minutes <= %s)
+    ),
+    joined AS (
+        -- к каждому требуемому продукту рецепта подкладываем, есть ли он у юзера
+        SELECT
+            rn.recipe_id,
+            rn.name,
+            rn.description,
+            rn.instructions,
+            rn.cooking_time_minutes,
+            rn.product_id,
+            ui.product_id IS NOT NULL AS user_has
+        FROM recipe_need rn
+        LEFT JOIN user_inv ui
+               ON ui.product_id = rn.product_id
+    )
+    SELECT
+        recipe_id,
+        MAX(name) AS name,
+        MAX(description) AS description,
+        MAX(instructions) AS instructions,
+        MAX(cooking_time_minutes) AS cooking_time_minutes,
+        COUNT(*) FILTER (WHERE NOT user_has) AS missing_count
+    FROM joined
+    GROUP BY recipe_id
+    ORDER BY recipe_id;
+    """
+
+    results = []
+    with conn:
+        with conn.cursor(cursor_factory=DictCursor) as cur:
+            cur.execute(sql, (telegram_id, max_time, max_time))
+            rows = cur.fetchall()
+
+    conn.close()
+
+    for row in rows:
+        missing = row["missing_count"] or 0
+
+        if only_owned and missing != 0:
+            continue
+        if allow_1_2 and missing > 2:
+            continue
+
+        results.append({
+            "id": row["recipe_id"],
+            "name": row["name"],
+            "description": row["description"],
+            "instructions": row["instructions"],
+            "cooking_time_minutes": row["cooking_time_minutes"],
+            "missing_count": missing,
+        })
+
+    return results
+
+def get_recipe_main_image(recipe_id: int) -> str | None:
+    """Возвращает URL главного изображения рецепта."""
+    sql = "SELECT image_url FROM recipes WHERE id = %s;"
+    image_url = None
+    conn = get_db_connection()
+    if conn:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (recipe_id,))
+                result = cur.fetchone()
+                if result:
+                    image_url = result[0]
+        conn.close()
+    return image_url
+
+def get_recipe_step_images(recipe_id: int) -> list[dict]:
+    """Возвращает список пошаговых изображений для рецепта."""
+    sql = """
+        SELECT image_url, step_number
+        FROM recipe_images
+        WHERE recipe_id = %s
+        ORDER BY step_number ASC;
+    """
+    images = []
+    conn = get_db_connection()
+    if conn:
+        with conn:
+            with conn.cursor(cursor_factory=DictCursor) as cur:
+                cur.execute(sql, (recipe_id,))
+                images = [dict(row) for row in cur.fetchall()]
+        conn.close()
+    return images
+
+def get_recipe_nutrition(recipe_id: int) -> dict | None:
+    """
+    Возвращает КБЖУ и количество ингредиентов, не учтенных в подсчете, для одного рецепта по его ID.
+    """
+    sql = """
+        SELECT
+            calories,
+            protein,
+            fat,
+            carbs,
+            nutrition_missing
+        FROM recipes
+        WHERE id = %s;
+    """
+    conn = get_db_connection()
+    if not conn:
+        return None
+
+    nutrition_info = None
+    with conn:
+        with conn.cursor(cursor_factory=DictCursor) as cur:
+            cur.execute(sql, (recipe_id,))
+            record = cur.fetchone()
+            if record:
+                # Используем COALESCE на уровне Python для обработки возможных None
+                nutrition_info = {
+                    'calories': record['calories'] or Decimal('0.00'),
+                    'protein': record['protein'] or Decimal('0.00'),
+                    'fat': record['fat'] or Decimal('0.00'),
+                    'carbs': record['carbs'] or Decimal('0.00'),
+                    'nutrition_missing': record['nutrition_missing'] or 0
+                }
+    conn.close()
+    return nutrition_info
+
+
+def get_product_lifetime(category_id: int):
+    sql_categories = f"""
+                     SELECT shelf_life_days
+                     FROM categories
+                     WHERE id = %s;
+                     """
+    conn = get_db_connection()
+    if conn:
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute(sql_categories, (category_id,))
+                    result = cur.fetchone()
+                    if result:
+                        life_time = result[0]
+        except Exception as e:
+            logger.error(f"Error getting product category: {e}")
+        finally:
+            conn.close()
+
+    return life_time
+
+def get_product_added_at(telegram_id: int, product_id: int):
+    """
+    Возвращает дату добавления конкретного продукта конкретным пользователем.
+    """
+    sql_products = """
+                     SELECT added_at
+                     FROM user_products
+                     WHERE user_id = (SELECT id FROM users WHERE telegram_id = %s)
+                       AND product_id = %s;
+                   """
+
+    conn = get_db_connection()
+    added_at = None
     
-    current_prefs = _user_preferences.get(telegram_id, [])
-    ids_to_delete_set = set(note_ids)
-    
-    _user_preferences[telegram_id] = [p for p in current_prefs if p['id'] not in ids_to_delete_set]
-    logger.info(f"Mock DB: Удалены предпочтения с ID {note_ids} для telegram_id {telegram_id}")
+    if conn:
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute(sql_products, (telegram_id, product_id))
+                    result = cur.fetchone()
+                    if result:
+                        added_at = result[0]
+        except Exception as e:
+            logger.error(f"Error getting product added_at: {e}")
+        finally:
+            conn.close()
 
-def delete_user_food_constraints_by_ids(telegram_id: int, note_ids: list[int]):
-    """Имитация: удаляет ограничения по списку их ID."""
-    ensure_user_exists(telegram_id, "Mock User")
-    if not note_ids: return
+    return added_at
 
-    current_constraints = _user_food_constraints.get(telegram_id, [])
-    ids_to_delete_set = set(note_ids)
-    
-    _user_food_constraints[telegram_id] = [c for c in current_constraints if c['id'] not in ids_to_delete_set]
-    logger.info(f"Mock DB: Удалены ограничения с ID {note_ids} для telegram_id {telegram_id}")
 
-def clear_user_preferences(telegram_id: int):
-    """Имитация: удаляет все предпочтения пользователя."""
-    ensure_user_exists(telegram_id, "Mock User")
-    _user_preferences[telegram_id] = []
-    logger.info(f"Mock DB: Очищены все предпочтения для telegram_id {telegram_id}")
+def get_product_category(product_id: int):
+    sql_categories = """
+                     SELECT category_id
+                     FROM products
+                     WHERE id = %s;
+                     """
+    conn = get_db_connection()
+    category = None
+    if conn:
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute(sql_categories, (product_id,))
+                    result = cur.fetchone()
+                    if result:
+                        category = result[0]
+        except Exception as e:
+            logger.error(f"Error getting product category: {e}")
+        finally:
+            conn.close()
 
-def clear_user_food_constraints(telegram_id: int):
-    """Имитация: удаляет все ограничения пользователя."""
-    ensure_user_exists(telegram_id, "Mock User")
-    _user_food_constraints[telegram_id] = []
-    logger.info(f"Mock DB: Очищены все ограничения для telegram_id {telegram_id}")
+    return int(category) if category is not None else None

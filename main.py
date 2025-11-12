@@ -348,6 +348,27 @@ def parse_products_with_quantity(text: str) -> list:
     Возвращает список словарей: [{'name': ..., 'quantity': ..., 'unit': ...}]
     """
     parsed_products = []
+
+    # Заменяем единицы измерения
+    def normalize_ingredient(input_text):
+        """Нормализация пользовательского ввода"""
+        normalization_map = {
+            'грамм': 'г', 'граммов': 'г', 'гр': 'г',
+            'килограмм': 'кг', 'килограммов': 'кг', 'кг.': 'кг',
+            'миллилитр': 'мл', 'миллилитров': 'мл', 'мл.': 'мл',
+            'литр': 'л', 'литров': 'л', 'л.': 'л',
+            'стакан': 'ст.', 'стакана': 'ст.', 'стаканов': 'ст.',
+            'ложка': 'ст.л.', 'ложки': 'ст.л.', 'ложек': 'ст.л.',
+            'чайная ложка': 'ч.л.', 'чайные ложки': 'ч.л.', 'чайных ложек': 'ч.л.',
+            'столовая ложка': 'ст.л.', 'столовые ложки': 'ст.л.', 'столовых ложек': 'ст.л.',
+            'штука': 'шт', 'штуки': 'шт', 'штук': 'шт',
+        }
+
+        for old, new in normalization_map.items():
+            input_text = input_text.replace(old, new)
+
+        return input_text
+    text = normalize_ingredient(text)
     
     # Если есть запятые, разделяем по запятым
     if ',' in text:
@@ -418,7 +439,7 @@ def parse_products_with_quantity(text: str) -> list:
             name = item.lower()
             quantity = None
             unit = None
-        
+
         parsed_products.append({'name': name, 'quantity': quantity, 'unit': unit})
         
     return parsed_products

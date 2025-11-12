@@ -12,14 +12,14 @@ CREATE DATABASE foodmatcher;
 
 Примените скрипт для создания структуры. Не забудьте указать путь до скрипта
 
-psql -U fooduser -d foodmatcher -f init.sql
+psql -U postgres -d foodmatcher -f init.sql
 
-Внесите данные из дампа
+Загрузить данные из дампа (SQL-файл)
 
-pg_restore -U fooduser -d foodmatcher foodmatcher.dump
+psql -U postgres -d foodmatcher -f foodmatcher_YYYY-MM-DD.sql
 
 Готово
 
 можете протестировать 
 
-psql -U fooduser -d foodmatcher -c "SELECT COUNT(*) FROM recipes;"
+psql -U postgres -d foodmatcher -c "SELECT COUNT(*) FROM recipes;"

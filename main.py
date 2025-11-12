@@ -1,13 +1,20 @@
 import logging
 import os
 import re
+import json
+import tempfile
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 from dotenv import load_dotenv
 
 from telegram import (InlineKeyboardButton, InlineKeyboardMarkup,
                     ReplyKeyboardMarkup, ReplyKeyboardRemove, Update)
 from telegram.ext import (Application, CallbackQueryHandler, CommandHandler,
                           ConversationHandler, ContextTypes, MessageHandler, filters)
+
+from vosk import Model, KaldiRecognizer
+import wave
+from pydub import AudioSegment
 
 # --- НАСТРОЙКА И КОНСТАНТЫ ---
 
@@ -31,12 +38,105 @@ ALL_EQUIPMENT_CACHE = set()
 # Константа для удаления клавиатуры
 REMOVE_KEYBOARD = ReplyKeyboardRemove()
 
+# Глобальная переменная для модели Vosk
+VOSK_MODEL = None
+
 # Состояния для ConversationHandler'ов
 (
     MANAGE_STORAGE, ADD_PRODUCTS, REMOVE_PRODUCTS,
     MANAGE_EQUIPMENT, ADD_EQUIPMENT, REMOVE_EQUIPMENT,
     CHOOSE_RECIPE_TYPE, FILTER_BY_TIME
 ) = range(8)
+
+# --- ФУНКЦИИ ДЛЯ РАБОТЫ С ГОЛОСОВЫМИ СООБЩЕНИЯМИ ---
+
+def init_vosk_model():
+    global VOSK_MODEL
+    
+    if VOSK_MODEL is not None:
+        return True
+    
+    model_path = os.getenv("VOSK_MODEL_PATH", "vosk-model-small-ru-0.22")
+    
+    try:
+        VOSK_MODEL = Model(model_path)
+        logger.info(f"Модель загружена из {model_path}")
+        return True
+    except Exception as e:
+        logger.error(f"Ошибка при загрузке модели: {e}")
+        return False
+
+async def download_voice_file(voice_file, bot) -> str:
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.ogg') as tmp_file:
+        file_path = tmp_file.name
+        file = await bot.get_file(voice_file.file_id)
+        await file.download_to_drive(file_path)
+        return file_path
+
+def convert_ogg_to_wav(ogg_path: str) -> str:
+    wav_path = ogg_path.replace('.ogg', '.wav')
+    audio = AudioSegment.from_ogg(ogg_path)
+    audio = audio.set_frame_rate(16000).set_channels(1).set_sample_width(2)
+    audio.export(wav_path, format="wav")
+    os.unlink(ogg_path)
+    return wav_path
+
+def recognize_speech(audio_path: str) -> str:
+    try:
+        wf = wave.open(audio_path, "rb")
+        
+        if wf.getnchannels() != 1 or wf.getcomptype() != "NONE":
+            wf.close()
+            return None
+        
+        rec = KaldiRecognizer(VOSK_MODEL, wf.getframerate())
+        rec.SetWords(True)
+        
+        text_parts = []
+        while True:
+            data = wf.readframes(4000)
+            if len(data) == 0:
+                break
+            if rec.AcceptWaveform(data):
+                result = json.loads(rec.Result())
+                if 'text' in result and result['text']:
+                    text_parts.append(result['text'])
+        
+        final_result = json.loads(rec.FinalResult())
+        if 'text' in final_result and final_result['text']:
+            text_parts.append(final_result['text'])
+        
+        wf.close()
+        recognized_text = ' '.join(text_parts).strip()
+        return recognized_text if recognized_text else None
+        
+    except Exception as e:
+        logger.error(f"Ошибка при распознавании речи: {e}")
+        return None
+    finally:
+        if os.path.exists(audio_path):
+            os.unlink(audio_path)
+
+async def process_voice_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+    voice = update.message.voice
+    if not voice:
+        return None
+    
+    try:
+        ogg_path = await download_voice_file(voice, context.bot)
+        wav_path = convert_ogg_to_wav(ogg_path)
+        text = recognize_speech(wav_path)
+        
+        if text:
+            logger.info(f"Распознано из голосового сообщения: {text}")
+            return text
+        else:
+            await update.message.reply_text("Не удалось распознать речь. Попробуйте еще раз или введите текст.")
+            return None
+            
+    except Exception as e:
+        await update.message.reply_text("Произошла ошибка при обработке голосового сообщения. Попробуйте ввести текст.")
+        return None
 
 # --- УНИВЕРСАЛЬНЫЕ ФУНКЦИИ И ГЛАВНОЕ МЕНЮ ---
 
@@ -85,6 +185,11 @@ async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return ConversationHandler.END
 
 
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Отменяет текущий диалог и возвращает в главное меню."""
+    await main_menu(update, context)
+    return ConversationHandler.END
+
 async def back_to_main_menu_inline(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     Обрабатывает нажатие inline-кнопки "Назад в меню".
@@ -117,13 +222,29 @@ async def view_equipment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     return MANAGE_EQUIPMENT
 
 async def add_equipment_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text("Введите оборудование, которое хотите добавить, через запятую:", reply_markup=REMOVE_KEYBOARD)
+    await update.message.reply_text(
+        "Введите оборудование, которое хотите добавить, через запятую (или отправьте голосовое сообщение):",
+        reply_markup=REMOVE_KEYBOARD
+    )
     return ADD_EQUIPMENT
 
 async def add_equipment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Добавление оборудования с валидацией."""
+    text = None
+    if update.message.voice:
+        text = await process_voice_message(update, context)
+        if not text:
+            return ADD_EQUIPMENT
+        await update.message.reply_text(f"🎤 Распознано: {text}")
+    elif update.message.text:
+        text = update.message.text
+    
+    if not text:
+        await update.message.reply_text("Пожалуйста, введите текст или отправьте голосовое сообщение.")
+        return ADD_EQUIPMENT
+    
     user_id = update.message.from_user.id
-    input_equipment = {e.strip().lower() for e in update.message.text.split(",") if e.strip()}
+    input_equipment = {e.strip().lower() for e in text.split(",") if e.strip()}
     
     valid_equipment = input_equipment.intersection(ALL_EQUIPMENT_CACHE)
     invalid_equipment = input_equipment.difference(ALL_EQUIPMENT_CACHE)
@@ -137,13 +258,30 @@ async def add_equipment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     return await manage_equipment(update, context)
 
 async def remove_equipment_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text("Введите оборудование для удаления, через запятую:", reply_markup=REMOVE_KEYBOARD)
+    await update.message.reply_text(
+        "Введите оборудование для удаления, через запятую (или отправьте голосовое сообщение):",
+        reply_markup=REMOVE_KEYBOARD
+    )
     return REMOVE_EQUIPMENT
 
 async def remove_equipment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Удаление оборудования с валидацией."""
+    # Получаем текст из сообщения или из голосового распознавания
+    text = None
+    if update.message.voice:
+        text = await process_voice_message(update, context)
+        if not text:
+            return REMOVE_EQUIPMENT
+        await update.message.reply_text(f"🎤 Распознано: {text}")
+    elif update.message.text:
+        text = update.message.text
+    
+    if not text:
+        await update.message.reply_text("Пожалуйста, введите текст или отправьте голосовое сообщение.")
+        return REMOVE_EQUIPMENT
+    
     user_id = update.message.from_user.id
-    input_equipment = {e.strip().lower() for e in update.message.text.split(",") if e.strip()}
+    input_equipment = {e.strip().lower() for e in text.split(",") if e.strip()}
     
     valid_equipment = input_equipment.intersection(ALL_EQUIPMENT_CACHE)
     invalid_equipment = input_equipment.difference(ALL_EQUIPMENT_CACHE)
@@ -191,10 +329,54 @@ async def view_products(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 def parse_products_with_quantity(text: str) -> list:
     """
     Парсит строку вида "продукт1 100 г, продукт2, продукт3 1.5 шт"
+    Если запятых нет (голосовой ввод), пытается умно разделить по пробелам,
+    проверяя комбинации слов на соответствие продуктам из справочника
     Возвращает список словарей: [{'name': ..., 'quantity': ..., 'unit': ...}]
     """
     parsed_products = []
-    items = [item.strip() for item in text.split(',') if item.strip()]
+    
+    # Если есть запятые, разделяем по запятым
+    if ',' in text:
+        items = [item.strip() for item in text.split(',') if item.strip()]
+    else:
+        words = text.strip().split()
+        items = []
+        i = 0
+        
+        while i < len(words):
+            if re.match(r'^\d+\.?\d*$', words[i]):
+                if i + 1 < len(words) and len(words[i + 1]) <= 5:
+                    i += 2
+                    continue
+                else:
+                    i += 1
+                    continue
+            
+            # Пытаемся найти продукт, начиная с самых длинных комбинаций (3, 2, 1 слово)
+            found = False
+            for length in [3, 2, 1]:
+                if i + length <= len(words):
+                    candidate = ' '.join(words[i:i+length]).lower()
+                    if candidate in ALL_PRODUCTS_CACHE:
+                        items.append(candidate)
+                        i += length
+                        found = True
+                        break
+            
+            # Если не нашли комбинацию, проверяем, может быть следующее слово даст результат
+            if not found:
+                next_found = False
+                for length in [2, 1]:
+                    if i + 1 + length <= len(words):
+                        candidate = ' '.join(words[i+1:i+1+length]).lower()
+                        if candidate in ALL_PRODUCTS_CACHE:
+                            i += 1 + length
+                            next_found = True
+                            break
+                
+                if not next_found:
+                    items.append(words[i].lower())
+                    i += 1
     
     # Регулярное выражение для поиска количества и единицы измерения в конце строки
     # (.+?)           - (Группа 1: Название) Любые символы, нежадно
@@ -228,13 +410,31 @@ def parse_products_with_quantity(text: str) -> list:
     return parsed_products
 
 async def add_products_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text("Введите продукты для добавления через запятую:", reply_markup=REMOVE_KEYBOARD)
+    await update.message.reply_text(
+        "Введите продукты для добавления через запятую (или отправьте голосовое сообщение):",
+        reply_markup=REMOVE_KEYBOARD
+    )
     return ADD_PRODUCTS
 
 async def add_products(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Добавление продуктов. Поддерживает текст и голосовые сообщения."""
+    # Получаем текст из сообщения или из голосового распознавания
+    text = None
+    if update.message.voice:
+        text = await process_voice_message(update, context)
+        if not text:
+            return ADD_PRODUCTS
+        await update.message.reply_text(f"🎤 Распознано: {text}")
+    elif update.message.text:
+        text = update.message.text
+    
+    if not text:
+        await update.message.reply_text("Пожалуйста, введите текст или отправьте голосовое сообщение.")
+        return ADD_PRODUCTS
+    
     user_id = update.message.from_user.id
     
-    parsed_input = parse_products_with_quantity(update.message.text)
+    parsed_input = parse_products_with_quantity(text)
     if not parsed_input:
         await update.message.reply_text("Пожалуйста, введите названия продуктов.")
         return await manage_storage(update, context)
@@ -285,13 +485,31 @@ async def add_products(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 
 
 async def remove_products_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text("Введите продукты для удаления через запятую:", reply_markup=REMOVE_KEYBOARD)
+    await update.message.reply_text(
+        "Введите продукты для удаления через запятую (или отправьте голосовое сообщение):",
+        reply_markup=REMOVE_KEYBOARD
+    )
     return REMOVE_PRODUCTS
 
 async def remove_products(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Удаление продуктов. Поддерживает текст и голосовые сообщения."""
+    # Получаем текст из сообщения или из голосового распознавания
+    text = None
+    if update.message.voice:
+        text = await process_voice_message(update, context)
+        if not text:
+            return REMOVE_PRODUCTS
+        await update.message.reply_text(f"🎤 Распознано: {text}")
+    elif update.message.text:
+        text = update.message.text
+    
+    if not text:
+        await update.message.reply_text("Пожалуйста, введите текст или отправьте голосовое сообщение.")
+        return REMOVE_PRODUCTS
+    
     user_id = update.message.from_user.id
     
-    parsed_input = parse_products_with_quantity(update.message.text)
+    parsed_input = parse_products_with_quantity(text)
     if not parsed_input:
         await update.message.reply_text("Пожалуйста, введите названия продуктов.")
         return await manage_storage(update, context)
@@ -620,6 +838,12 @@ def main() -> None:
     ALL_EQUIPMENT_CACHE = db.get_all_equipment_names()
     logger.info(f"Загружено {len(ALL_PRODUCTS_CACHE)} продуктов и {len(ALL_EQUIPMENT_CACHE)} единиц оборудования.")
 
+    # Инициализация модели Vosk для распознавания речи
+    if init_vosk_model():
+        logger.info("Модель Vosk успешно инициализирована. Голосовые сообщения доступны.")
+    else:
+        logger.warning("Модель Vosk не инициализирована. Голосовые сообщения будут недоступны.")
+
     application = Application.builder().token(TELEGRAM_TOKEN).build()
     
     common_fallbacks = [
@@ -638,8 +862,14 @@ def main() -> None:
                 MessageHandler(filters.Regex("^Добавить продукты$"), add_products_prompt),
                 MessageHandler(filters.Regex("^Удалить продукты$"), remove_products_prompt),
             ],
-            ADD_PRODUCTS: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_products)],
-            REMOVE_PRODUCTS: [MessageHandler(filters.TEXT & ~filters.COMMAND, remove_products)],
+            ADD_PRODUCTS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, add_products),
+                MessageHandler(filters.VOICE, add_products),
+            ],
+            REMOVE_PRODUCTS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, remove_products),
+                MessageHandler(filters.VOICE, remove_products),
+            ],
         },
         fallbacks=common_fallbacks,
     )
@@ -653,8 +883,14 @@ def main() -> None:
                 MessageHandler(filters.Regex("^Добавить оборудование$"), add_equipment_prompt),
                 MessageHandler(filters.Regex("^Удалить оборудование$"), remove_equipment_prompt),
             ],
-            ADD_EQUIPMENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_equipment)],
-            REMOVE_EQUIPMENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, remove_equipment)],
+            ADD_EQUIPMENT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, add_equipment),
+                MessageHandler(filters.VOICE, add_equipment),
+            ],
+            REMOVE_EQUIPMENT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, remove_equipment),
+                MessageHandler(filters.VOICE, remove_equipment),
+            ],
         },
         fallbacks=common_fallbacks,
     )

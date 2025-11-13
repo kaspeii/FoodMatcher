@@ -1127,7 +1127,7 @@ async def filter_recipes_with_llm(recipes_to_filter: list, equipment_constraints
     try:
         logger.info("Отправка запроса к LLM для фильтрации рецептов...")
         completion = await groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="openai/gpt-oss-20b",
             messages=[
                 {
                     "role": "system",

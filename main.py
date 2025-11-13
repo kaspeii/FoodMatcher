@@ -233,7 +233,7 @@ async def manage_equipment(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     reply_keyboard = [
         ["➕ Добавить оборудование", "➖ Удалить оборудование"],
         ["👀 Посмотреть оборудование"],
-        ["🏠 Назад в меню"]
+        ["⬅️ Назад в меню"]
     ]
     await update.message.reply_text("👇 Выбери действие:", reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True))
     return MANAGE_EQUIPMENT
@@ -409,7 +409,7 @@ async def manage_storage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     reply_keyboard = [
         ["➕ Добавить продукты", "➖ Удалить продукты"],
         ["👀 Посмотреть продукты"],
-        ["🏠 Назад в меню"]
+        ["⬅️ Назад в меню"]
     ]
     await update.message.reply_text("👇 Выбери действие:", reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True))
     return MANAGE_STORAGE
@@ -753,7 +753,7 @@ async def manage_preferences(update: Update, context: ContextTypes.DEFAULT_TYPE)
         ["👍 Добавить предпочтение", "🚫 Добавить ограничение"],
         ["📄 Посмотреть мои данные"],
         ["🗑️ Удалить запись"],
-        ["🏠 Назад в меню"]
+        ["⬅️ Назад в меню"]
     ]
     await update.message.reply_text(
         "✍️ Выбери нужное и расскажи о том, что я должен знать о тебе",
@@ -1209,13 +1209,13 @@ async def filter_recipes_with_llm(recipes_to_filter: list, equipment_constraints
 async def find_and_show_recipes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Шаг 3: Получает время, ищет, сортирует и отображает рецепты."""
     user_input = update.message.text
-    if user_input == "Неважно":
+    if user_input == "🤷 Неважно":
         max_time = 0
     else:
         try:
             max_time = int(user_input)
         except (ValueError, TypeError):
-            await update.message.reply_text("🧐 Это не похоже на число. Пожалуйста, введи время в минутах или нажми 'Неважно'.")
+            await update.message.reply_text("🧐 Это не похоже на число. Пожалуйста, введи время в минутах или нажми '🤷 Неважно'.")
             return FILTER_BY_TIME
     
     user_id = update.message.from_user.id
@@ -1480,17 +1480,17 @@ def main() -> None:
         CommandHandler("start", start),
         CommandHandler("menu", main_menu),
         CommandHandler("cancel", cancel), # Добавляем нашу новую команду
-        MessageHandler(filters.Regex("^Назад в меню$"), main_menu) # Ваш надежный выход по кнопке
+        MessageHandler(filters.Regex("^⬅️ Назад в меню$"), main_menu) # Ваш надежный выход по кнопке
     ]
 
     # Ветка 1: Управление холодильником
     storage_conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^Мой холодильник$"), manage_storage)],
+        entry_points=[MessageHandler(filters.Regex("^🧊 Мой холодильник$"), manage_storage)],
         states={
             MANAGE_STORAGE: [
-                MessageHandler(filters.Regex("^Посмотреть продукты$"), view_products),
-                MessageHandler(filters.Regex("^Добавить продукты$"), add_products_prompt),
-                MessageHandler(filters.Regex("^Удалить продукты$"), remove_products_prompt),
+                MessageHandler(filters.Regex("^👀 Посмотреть продукты$"), view_products),
+                MessageHandler(filters.Regex("^➕ Добавить продукты$"), add_products_prompt),
+                MessageHandler(filters.Regex("^➖ Удалить продукты$"), remove_products_prompt),
             ],
             ADD_PRODUCTS: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, add_products),
@@ -1506,12 +1506,12 @@ def main() -> None:
     
     # Ветка 2: Управление оборудованием
     equipment_conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^Мое оборудование$"), manage_equipment)],
+        entry_points=[MessageHandler(filters.Regex("^🍳 Мое оборудование$"), manage_equipment)],
         states={
             MANAGE_EQUIPMENT: [
-                MessageHandler(filters.Regex("^Посмотреть оборудование$"), view_equipment),
-                MessageHandler(filters.Regex("^Добавить оборудование$"), add_equipment_interactive),
-                MessageHandler(filters.Regex("^Удалить оборудование$"), remove_equipment_interactive),
+                MessageHandler(filters.Regex("^👀 Посмотреть оборудование$"), view_equipment),
+                MessageHandler(filters.Regex("^➕ Добавить оборудование$"), add_equipment_interactive),
+                MessageHandler(filters.Regex("^➖ Удалить оборудование$"), remove_equipment_interactive),
             ],
             SELECTING_EQUIPMENT_KEYBOARD: [
                 CallbackQueryHandler(done_selecting_equipment, pattern="^equip_done$"),
@@ -1528,19 +1528,19 @@ def main() -> None:
     
     # Ветка 3: Управление предпочтениями и ограничениями
     preferences_conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^Предпочтения и ограничения$"), manage_preferences)],
+        entry_points=[MessageHandler(filters.Regex("^❤️‍🩹 Предпочтения и ограничения$"), manage_preferences)],
         states={
             MANAGE_PREFERENCES: [
-                MessageHandler(filters.Regex("^Посмотреть мои данные$"), view_preferences_and_constraints),
-                MessageHandler(filters.Regex("^Добавить предпочтение$"), add_preference_prompt),
-                MessageHandler(filters.Regex("^Добавить ограничение$"), add_constraint_prompt),
-                MessageHandler(filters.Regex("^Удалить запись$"), delete_type_prompt),
+                MessageHandler(filters.Regex("^📄 Посмотреть мои данные$"), view_preferences_and_constraints),
+                MessageHandler(filters.Regex("^👍 Добавить предпочтение$"), add_preference_prompt),
+                MessageHandler(filters.Regex("^🚫 Добавить ограничение$"), add_constraint_prompt),
+                MessageHandler(filters.Regex("^🗑️ Удалить запись$"), delete_type_prompt),
             ],
             ADD_PREFERENCE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_preference)],
             ADD_CONSTRAINT: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_constraint)],
             CHOOSE_DELETE_TYPE: [
-                MessageHandler(filters.Regex("^Предпочтения$"), list_preferences_for_deletion),
-                MessageHandler(filters.Regex("^Ограничения$"), list_constraints_for_deletion),
+                MessageHandler(filters.Regex("👍 Предпочтения$"), list_preferences_for_deletion),
+                MessageHandler(filters.Regex("^🚫 Ограничения$"), list_constraints_for_deletion),
             ],
             AWAIT_PREFERENCE_DELETION: [MessageHandler(filters.TEXT & ~filters.COMMAND, delete_preferences_by_number)],
             AWAIT_CONSTRAINT_DELETION: [MessageHandler(filters.TEXT & ~filters.COMMAND, delete_constraints_by_number)],
@@ -1550,9 +1550,9 @@ def main() -> None:
     
     # Ветка 4: Подбор рецепта
     recipe_conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^Подобрать рецепт$"), prompt_recipe_type)],
+        entry_points=[MessageHandler(filters.Regex("^🍲 Подобрать рецепт$"), prompt_recipe_type)],
         states={
-            CHOOSE_RECIPE_TYPE: [MessageHandler(filters.Regex("^(Только из имеющихся продуктов|Добавить 1-2 недостающих ингредиента)$"), prompt_for_time)],
+            CHOOSE_RECIPE_TYPE: [MessageHandler(filters.Regex("^(✅ Только из имеющихся продуктов|🛒 Добавить 1-2 недостающих ингредиента)$"), prompt_for_time)],
             FILTER_BY_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, find_and_show_recipes)],
         },
         fallbacks=common_fallbacks,
@@ -1562,7 +1562,7 @@ def main() -> None:
     # Регистрация всех обработчиков
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("menu", main_menu))
-    application.add_handler(MessageHandler(filters.Regex("^Помощь$"), help_command))
+    application.add_handler(MessageHandler(filters.Regex("^ℹ️ Помощь$"), help_command))
     application.add_handler(CommandHandler("help", help_command))
 
     application.add_handler(storage_conv)

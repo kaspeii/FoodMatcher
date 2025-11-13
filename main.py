@@ -179,7 +179,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     ]
     
     await update.message.reply_text(
-        f"👋 Привет, {user.first_name}! Я твой кулинарный помощник 🧑‍🍳. 👇 Выбери действие:",
+        f"👋 Привет, {user.first_name}! Я твой кулинарный помощник 🧑‍🍳.\n 👇 Выбери действие:",
         reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True),
     )
     

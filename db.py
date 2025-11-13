@@ -345,7 +345,7 @@ def get_recipe_by_id(recipe_id: int) -> dict | None:
                     description,
                     instructions,
                     cooking_time_minutes,
-                    equipment_raw AS equipment
+                    equipment_raw AS equipment_raw
                 FROM recipes
                 WHERE id = %s
                 """,
@@ -358,6 +358,7 @@ def get_recipe_by_id(recipe_id: int) -> dict | None:
             recipe = dict(record)
             recipe["ingredients"] = {}
             recipe["tags"] = set()
+            recipe["equipment"] = set()
 
             # ингредиенты
             cur.execute(
@@ -384,6 +385,18 @@ def get_recipe_by_id(recipe_id: int) -> dict | None:
             )
             for row in cur.fetchall():
                 recipe["tags"].add(row[0].lower())
+            
+            cur.execute(
+                """
+                SELECT e.name
+                FROM recipe_equipment re
+                JOIN equipment e ON re.equipment_id = e.id
+                WHERE re.recipe_id = %s
+                """,
+                (recipe_id,),
+            )
+            for row in cur.fetchall():
+                recipe["equipment"].add(row[0].lower())
 
         return recipe
 
@@ -473,16 +486,12 @@ def preliminary_filter_recipes_db(
     if not conn:
         return []
 
-    only_owned = (recipe_type == "Только из имеющихся продуктов")
-    allow_1_2 = (recipe_type == "Добавить 1-2 недостающих ингредиента")
 
     sql = """
     WITH user_inv AS (
         -- что есть у пользователя
         SELECT u.id AS user_id,
-               up.product_id,
-               up.quantity,
-               up.unit
+               up.product_id
         FROM users u
         JOIN user_products up ON up.user_id = u.id
         WHERE u.telegram_id = %s
@@ -494,9 +503,7 @@ def preliminary_filter_recipes_db(
                r.description,
                r.instructions,
                r.cooking_time_minutes,
-               ri.product_id,
-               ri.quantity AS need_qty,
-               ri.unit     AS need_unit
+               ri.product_id
         FROM recipes r
         JOIN recipe_ingredients ri ON ri.recipe_id = r.id
         WHERE (%s = 0 OR r.cooking_time_minutes IS NULL OR r.cooking_time_minutes <= %s)
@@ -509,7 +516,6 @@ def preliminary_filter_recipes_db(
             rn.description,
             rn.instructions,
             rn.cooking_time_minutes,
-            rn.product_id,
             ui.product_id IS NOT NULL AS user_has
         FROM recipe_need rn
         LEFT JOIN user_inv ui
@@ -527,32 +533,79 @@ def preliminary_filter_recipes_db(
     ORDER BY recipe_id;
     """
 
-    results = []
-    with conn:
+    filtered_recipes = []
+    try:
         with conn.cursor(cursor_factory=DictCursor) as cur:
             cur.execute(sql, (telegram_id, max_time, max_time))
             rows = cur.fetchall()
 
-    conn.close()
+            only_owned = (recipe_type == "Только из имеющихся продуктов")
+            allow_1_2 = (recipe_type == "Добавить 1-2 недостающих ингредиента")
 
-    for row in rows:
-        missing = row["missing_count"] or 0
+            for row in rows:
+                missing = row["missing_count"] or 0
+                if only_owned and missing != 0:
+                    continue
+                if allow_1_2 and missing > 2:
+                    continue
+                
+                filtered_recipes.append(dict(row))
+            
+            if not filtered_recipes:
+                return []
+            
+            recipes_map = {recipe['recipe_id']: recipe for recipe in filtered_recipes}
+            recipe_ids = list(recipes_map.keys())
 
-        if only_owned and missing != 0:
-            continue
-        if allow_1_2 and missing > 2:
-            continue
+            for recipe in recipes_map.values():
+                recipe['ingredients'] = {}
+                recipe['tags'] = set()
+                recipe['equipment'] = set()
+                recipe['id'] = recipe.pop('recipe_id')
 
-        results.append({
-            "id": row["recipe_id"],
-            "name": row["name"],
-            "description": row["description"],
-            "instructions": row["instructions"],
-            "cooking_time_minutes": row["cooking_time_minutes"],
-            "missing_count": missing,
-        })
 
-    return results
+            cur.execute(
+                """
+                SELECT ri.recipe_id, p.name, ri.quantity_description
+                FROM recipe_ingredients ri
+                JOIN products p ON ri.product_id = p.id
+                WHERE ri.recipe_id = ANY(%s)
+                """,
+                (recipe_ids,),
+            )
+            for row in cur.fetchall():
+                recipes_map[row['recipe_id']]['ingredients'][row['name']] = row['quantity_description']
+
+            cur.execute(
+                """
+                SELECT rt.recipe_id, t.name
+                FROM recipe_tags rt
+                JOIN tags t ON rt.tag_id = t.id
+                WHERE rt.recipe_id = ANY(%s)
+                """,
+                (recipe_ids,),
+            )
+            for row in cur.fetchall():
+                recipes_map[row['recipe_id']]['tags'].add(row['name'].lower())
+
+            cur.execute(
+                """
+                SELECT re.recipe_id, e.name
+                FROM recipe_equipment re
+                JOIN equipment e ON re.equipment_id = e.id
+                WHERE re.recipe_id = ANY(%s)
+                """,
+                (recipe_ids,),
+            )
+            for row in cur.fetchall():
+                recipes_map[row['recipe_id']]['equipment'].add(row['name'].lower())
+
+            return list(recipes_map.values())
+
+    finally:
+        conn.close()
+
+    return [] # На случай, если что-то пошло не так
 
 def get_recipe_main_image(recipe_id: int) -> str | None:
     """Возвращает URL главного изображения рецепта."""
@@ -611,7 +664,6 @@ def get_recipe_nutrition(recipe_id: int) -> dict | None:
             cur.execute(sql, (recipe_id,))
             record = cur.fetchone()
             if record:
-                # Используем COALESCE на уровне Python для обработки возможных None
                 nutrition_info = {
                     'calories': record['calories'] or Decimal('0.00'),
                     'protein': record['protein'] or Decimal('0.00'),

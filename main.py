@@ -602,7 +602,7 @@ async def add_products(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         )
         
         if new_quantity is None and p_in['quantity'] is not None:
-            report_incompatible_units.append(f"{db_name} ({p_in['quantity']} {p_in['unit'] or ''})")
+            report_incompatible_units.append(f"{db_name} ({p_in['quantity']} {p_in['unit'] or ''}),")
             continue
         
         existing_product = current_fridge.get(name)
@@ -612,7 +612,7 @@ async def add_products(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
             unit_to_store = new_unit or existing_product.get('unit')
             quantity_text = format_decimal(final_quantity)
             unit_suffix = f" {unit_to_store}" if unit_to_store else ""
-            report_updated.append(f"{db_name}: {quantity_text}{unit_suffix}")
+            report_updated.append(f"{db_name}: {quantity_text}{unit_suffix},")
             products_to_upsert.append({
                 'product_id': product_id,
                 'quantity': final_quantity,
@@ -622,7 +622,7 @@ async def add_products(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
             if new_quantity is not None:
                 quantity_text = format_decimal(new_quantity)
                 unit_suffix = f" {new_unit}" if new_unit else ""
-                report_added.append(f"{db_name} ({quantity_text}{unit_suffix})\n")
+                report_added.append(f"{db_name} ({quantity_text}{unit_suffix}),")
             else:
                 report_added.append(f"{db_name}\n")
             products_to_upsert.append({
@@ -637,13 +637,13 @@ async def add_products(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 
     response_parts = []
     if report_added:
-        response_parts.append(f"✅ Добавлено: {', '.join(report_added)}.")
+        response_parts.append(f"✅ Добавлено:\n {' '.join(report_added)}")
     if report_updated:
-        response_parts.append(f"🔄 Количество увеличено: {', '.join(report_updated)}.")
+        response_parts.append(f"🔄 Количество увеличено:\n {' '.join(report_updated)}")
     if report_invalid:
-        response_parts.append(f"❌ Не найдены в справочнике: {', '.join(report_invalid)}.")
+        response_parts.append(f"❌ Не найдены в справочнике:\n {' '.join(report_invalid)}")
     if report_incompatible_units:
-        response_parts.append(f"⚠️ Не удалось конвертировать: {', '.join(report_incompatible_units)}.")
+        response_parts.append(f"⚠️ Не удалось конвертировать:\n {' '.join(report_incompatible_units)}")
     
     if not response_parts:
         await update.message.reply_text("🤷 Ничего не было добавлено. Возможно, ты не указал продукты?")
@@ -1138,7 +1138,7 @@ async def filter_recipes_with_llm(recipes_to_filter: list, equipment_constraints
 [СТРОГИЕ ОГРАНИЧЕНИЯ - НЕЛЬЗЯ НАРУШАТЬ]:
 - Медицинские ограничения
 {strict_constraints}
-- У пользователя есть только
+- У пользователя есть только. Смотри наличие этих предметов ТОЛЬКО в Оборудовании и нигде больше
 {list(equipment_constraints)}
 
 [ПРЕДПОЧТЕНИЯ - ЖЕЛАТЕЛЬНО УЧЕСТЬ]:
@@ -1168,14 +1168,23 @@ async def filter_recipes_with_llm(recipes_to_filter: list, equipment_constraints
                 }
             ],
             temperature=0.1,
-            max_tokens=1024,
+            max_tokens=4096,
             response_format={"type": "json_object"},
         )
 
         response_content = completion.choices[0].message.content
         logger.info(f"Ответ от LLM получен: {response_content}")
+        
+        start_index = response_content.find('{')
+        end_index = response_content.rfind('}')
+        
+        if start_index != -1 and end_index != -1 and start_index < end_index:
+            json_string = response_content[start_index : end_index + 1]
+        else:
+            logger.error(f"В ответе LLM не найден JSON-объект: {response_content}")
+            return None, "Получен некорректный ответ от нейросети. Попробуйте еще раз."
 
-        parsed_json = json.loads(response_content)
+        parsed_json = json.loads(json_string)
         
         recipe_names = parsed_json.get("recipes")
         
@@ -1224,14 +1233,23 @@ async def find_and_show_recipes(update: Update, context: ContextTypes.DEFAULT_TY
         context.user_data.clear()
         return ConversationHandler.END
     
+    recipes_for_llm = []
+    for recipe in pre_filtered_recipes:
+        recipes_for_llm.append({
+            "name": recipe.get("name"),
+            "description": recipe.get("description"),
+            "ingredients": recipe.get("ingredients"),
+            "equipment": recipe.get("equipment")
+        })
+    
     # рандомизируем порядок и далее ограничиваем до 20 рецептов чтобы не потерять все токены на одном запросе
-    random.shuffle(pre_filtered_recipes)
+    random.shuffle(recipes_for_llm)
     if recipe_type == "Добавить 1-2 недостающих ингредиента":
-        pre_filtered_recipes = pre_filtered_recipes[:20]
+        recipes_for_llm = recipes_for_llm[:20]
         
     # 2. Финальная фильтрация и сортировка с помощью LLM
     final_recipe_names, error_message = await filter_recipes_with_llm(
-        recipes_to_filter=pre_filtered_recipes, #[:20]
+        recipes_to_filter=recipes_for_llm, #[:20]
         equipment_constraints=user_equipment,
         strict_constraints=food_constraints,
         soft_constraints=user_preferences
@@ -1239,6 +1257,7 @@ async def find_and_show_recipes(update: Update, context: ContextTypes.DEFAULT_TY
 
     if error_message:
         await update.message.reply_text(f"🛠️ Произошла ошибка: {error_message}")
+        await main_menu(update, context) 
         context.user_data.clear()
         return ConversationHandler.END
 
@@ -1250,6 +1269,7 @@ async def find_and_show_recipes(update: Update, context: ContextTypes.DEFAULT_TY
 
         if not final_recipes:
             await update.message.reply_text("⚙️ Произошла ошибка при сопоставлении рецептов. Попробуй еще раз.")
+            await main_menu(update, context) 
             context.user_data.clear()
             return ConversationHandler.END
 
@@ -1291,6 +1311,12 @@ async def recipe_details(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         for name, amount in recipe["ingredients"].items()
     )
     
+    equipment_set = recipe.get('equipment', set())
+    if equipment_set:
+        equipment_str = ", ".join(e.capitalize() for e in equipment_set)
+    else:
+        equipment_str = "Не требуется"
+    
     if nutrition_info:
         def format_decimal(d_val):
             """Красиво форматирует число, убирая лишние нули."""
@@ -1303,10 +1329,10 @@ async def recipe_details(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         
     
     instructions_text = '\n'.join(recipe['instructions'].splitlines())
-    if recipe['cooking_time_minutes'] is None:
-        time = ""
-    else:
-        time = f"*Время приготовления:* {recipe['cooking_time_minutes']} мин.\n\n"
+    
+    time_str = ""
+    if recipe.get('cooking_time_minutes'):
+        time_str = f"*Время приготовления:* {recipe['cooking_time_minutes']} мин.\n\n"
         
 
     text = (
@@ -1314,8 +1340,8 @@ async def recipe_details(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         f"_{recipe['description']}_\n\n"
         f"*Ингредиенты:*\n{ingredients_list}\n\n"
         f"*Способ приготовления:*\n{instructions_text}\n\n" 
-        f"{time}"
-        f"*Оборудование:* {recipe['equipment'] if recipe['equipment'] is not None else "Оборудование не требуется"}\n"
+        f"{time_str}"
+        f"*Оборудование:* {equipment_str}\n"
         f"*КБЖУ на 100г:*\n{kbju_text}"
     )
     
@@ -1325,7 +1351,6 @@ async def recipe_details(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     ])
 
     if main_image_url:
-        # ПРАВИЛЬНЫЙ СПОСОБ: Редактируем сообщение, заменяя его содержимое на фото с подписью
         media = InputMediaPhoto(
             media=main_image_url,
             caption=text,
@@ -1333,7 +1358,6 @@ async def recipe_details(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         await query.edit_message_media(media=media, reply_markup=keyboard)
     else:
-        # Если картинки нет, просто редактируем текст, как и раньше
         await query.edit_message_text(
             text=text,
             parse_mode='Markdown',

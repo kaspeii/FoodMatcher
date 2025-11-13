@@ -1226,6 +1226,8 @@ async def find_and_show_recipes(update: Update, context: ContextTypes.DEFAULT_TY
     
     # рандомизируем порядок и далее ограничиваем до 20 рецептов чтобы не потерять все токены на одном запросе
     random.shuffle(pre_filtered_recipes)
+    if recipe_type == "Добавить 1-2 недостающих ингредиента":
+        pre_filtered_recipes = pre_filtered_recipes[:20]
         
     # 2. Финальная фильтрация и сортировка с помощью LLM
     final_recipe_names, error_message = await filter_recipes_with_llm(

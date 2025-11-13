@@ -172,10 +172,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     db.ensure_user_exists(user.id, user.first_name)
     
     reply_keyboard = [
-        ["Мой холодильник", "Мое оборудование"],
-        ["Предпочтения и ограничения"],
-        ["Подобрать рецепт"],
-        ["Помощь"],
+        ["🧊 Мой холодильник", "🍳 Мое оборудование"],
+        ["❤️‍🩹 Предпочтения и ограничения"],
+        ["🍲 Подобрать рецепт"],
+        ["ℹ️ Помощь"]
     ]
     
     await update.message.reply_text(
@@ -195,10 +195,10 @@ async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     db.ensure_user_exists(user.id, user.first_name)
     
     reply_keyboard = [
-        ["Мой холодильник", "Мое оборудование"],
-        ["Предпочтения и ограничения"],
-        ["Подобрать рецепт"],
-        ["Помощь"],
+        ["🧊 Мой холодильник", "🍳 Мое оборудование"],
+        ["❤️‍🩹 Предпочтения и ограничения"],
+        ["🍲 Подобрать рецепт"],
+        ["ℹ️ Помощь"]
     ]
     
     await update.message.reply_text(
@@ -231,9 +231,9 @@ async def back_to_main_menu_inline(update: Update, context: ContextTypes.DEFAULT
 async def manage_equipment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Меню управления оборудованием."""
     reply_keyboard = [
-        ["Добавить оборудование", "Удалить оборудование"],
-        ["Посмотреть оборудование"],
-        ["Назад в меню"],
+        ["➕ Добавить оборудование", "➖ Удалить оборудование"],
+        ["👀 Посмотреть оборудование"],
+        ["🏠 Назад в меню"]
     ]
     await update.message.reply_text("👇 Выбери действие:", reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True))
     return MANAGE_EQUIPMENT
@@ -407,9 +407,9 @@ async def done_removing_equipment(update: Update, context: ContextTypes.DEFAULT_
 async def manage_storage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Меню управления холодильником."""
     reply_keyboard = [
-        ["Добавить продукты", "Удалить продукты"],
-        ["Посмотреть продукты"],
-        ["Назад в меню"],
+        ["➕ Добавить продукты", "➖ Удалить продукты"],
+        ["👀 Посмотреть продукты"],
+        ["🏠 Назад в меню"]
     ]
     await update.message.reply_text("👇 Выбери действие:", reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True))
     return MANAGE_STORAGE
@@ -750,13 +750,13 @@ async def remove_products(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 async def manage_preferences(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Главное меню для предпочтений и ограничений."""
     reply_keyboard = [
-        ["Добавить предпочтение", "Добавить ограничение"],
-        ["Посмотреть мои данные"],
-        ["Удалить запись"],
-        ["Назад в меню"],
+        ["👍 Добавить предпочтение", "🚫 Добавить ограничение"],
+        ["📄 Посмотреть мои данные"],
+        ["🗑️ Удалить запись"],
+        ["🏠 Назад в меню"]
     ]
     await update.message.reply_text(
-        "✍️ Расскажи, что мне нужно знать о твоих вкусах, чтобы я мог подобрать идеальный рецепт.",
+        "✍️ Выбери нужное и расскажи о том, что я должен знать о тебе",
         reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
     )
     return MANAGE_PREFERENCES
@@ -831,7 +831,11 @@ async def add_constraint(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def delete_type_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Спрашивает, что удалять: предпочтения или ограничения."""
-    reply_keyboard = [["Предпочтения"], ["Ограничения"], ["Отмена"]]
+    reply_keyboard = [
+        ["👍 Предпочтения"],
+        ["🚫 Ограничения"],
+        ["↩️ Отмена"]
+    ]
     await update.message.reply_text(
         "🗑️ Записи из какого списка ты хочешь удалить?",
         reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True, one_time_keyboard=True)
@@ -970,8 +974,8 @@ async def delete_constraints_by_number(update: Update, context: ContextTypes.DEF
 async def prompt_recipe_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Шаг 1: Спрашивает, как подбирать рецепт."""
     reply_keyboard = [
-        ["Только из имеющихся продуктов"],
-        ["Добавить 1-2 недостающих ингредиента"],
+        ["✅ Только из имеющихся продуктов"],
+        ["🛒 Добавить 1-2 недостающих ингредиента"]
     ]
     await update.message.reply_text(
         "🧑‍🍳 Как будем подбирать рецепт?",
@@ -983,7 +987,7 @@ async def prompt_for_time(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     """Шаг 2: Получает тип подбора, сохраняет его и спрашивает про время."""
     context.user_data["recipe_type"] = update.message.text
     
-    time_keyboard = ReplyKeyboardMarkup([["Неважно"]], one_time_keyboard=True, resize_keyboard=True)
+    time_keyboard = ReplyKeyboardMarkup([["🤷 Неважно"]], one_time_keyboard=True, resize_keyboard=True)
     
     await update.message.reply_text(
         "⏱️ Введи максимальное время приготовления в минутах или нажми кнопку.",

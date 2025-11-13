@@ -784,7 +784,7 @@ async def view_preferences_and_constraints(update: Update, context: ContextTypes
     return MANAGE_PREFERENCES
 
 async def add_preference_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text("Напиши, что ты любишь или недолюбливаешь в еде:", reply_markup=REMOVE_KEYBOARD)
+    await update.message.reply_text("Напиши, что ты любишь в еде:", reply_markup=REMOVE_KEYBOARD)
     return ADD_PREFERENCE
 
 async def add_constraint_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1197,6 +1197,7 @@ async def find_and_show_recipes(update: Update, context: ContextTypes.DEFAULT_TY
         context.user_data.clear()
         return ConversationHandler.END
     
+    # рандомизируем порядок и далее ограничиваем до 20 рецептов чтобы не потерять все токены на одном запросе
     random.shuffle(pre_filtered_recipes)
         
     # 2. Финальная фильтрация и сортировка с помощью LLM

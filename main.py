@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from typing import Optional, Tuple, List, Dict, Any, Set
 from globals import *
 from thefuzz import process
+import random
 
 from telegram import (InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto,
                     ReplyKeyboardMarkup, ReplyKeyboardRemove, Update)
@@ -1195,10 +1196,12 @@ async def find_and_show_recipes(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text("К сожалению, подходящих рецептов не найдено.")
         context.user_data.clear()
         return ConversationHandler.END
+    
+    random.shuffle(pre_filtered_recipes)
         
     # 2. Финальная фильтрация и сортировка с помощью LLM
     final_recipe_names = await filter_recipes_with_llm(
-        recipes_to_filter=pre_filtered_recipes,
+        recipes_to_filter=pre_filtered_recipes[:20],
         equipment_constraints=user_equipment,
         strict_constraints=food_constraints,
         soft_constraints=user_preferences

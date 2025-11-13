@@ -1313,6 +1313,15 @@ async def recipe_details(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not recipe:
         await query.edit_message_text(text="😕 Извини, этот рецепт не найден.")
         return
+    
+    try:
+        await query.edit_message_text(
+            text=f"📖 Открываю рецепт: *{recipe['name']}*",
+            parse_mode='Markdown',
+            reply_markup=None
+        )
+    except Exception as e:
+        logger.warning(f"Не удалось отредактировать старое сообщение: {e}")
 
     main_image_url = db.get_recipe_main_image(recipe_id)
     nutrition_info = db.get_recipe_nutrition(recipe_id)
@@ -1364,8 +1373,12 @@ async def recipe_details(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     
     if main_image_url:
         short_caption = f"*{recipe['name']}*\n\n_{recipe['description']}_"
-        media = InputMediaPhoto(media=main_image_url, caption=short_caption, parse_mode='Markdown')
-        await query.edit_message_media(media=media)
+        await context.bot.send_photo(
+            chat_id=update.effective_chat.id,
+            photo=main_image_url,
+            caption=short_caption,
+            parse_mode='Markdown'
+        )
 
         details_text = (
             f"*Ингредиенты:*\n{ingredients_list}\n\n"
@@ -1393,11 +1406,7 @@ async def cook_recipe_and_update_storage(update: Update, context: ContextTypes.D
     recipe = db.get_recipe_by_id(recipe_id)
 
     if not recipe:
-        if query.message.photo:
-            await query.edit_message_caption(caption="❌ Ошибка: рецепт для списания не найден.", reply_markup=None)
-        else:
-            await query.edit_message_text(text="❌ Ошибка: рецепт для списания не найден.", reply_markup=None)
-        return
+        await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ Ошибка: рецепт для списания не найден.", parse_mode='Markdown', reply_markup=None)
 
     current_fridge = db.get_user_products(user_id)
     required_ingredients = recipe.get("ingredients", {})
@@ -1450,18 +1459,8 @@ async def cook_recipe_and_update_storage(update: Update, context: ContextTypes.D
         f"*{recipe['name']}*\n\n{final_report}\n\nПриятного аппетита! 😋"
     )
         
-    if query.message.photo:
-        await query.edit_message_caption(
-            caption=final_text,
-            parse_mode='Markdown',
-            reply_markup=None
-        )
-    else:
-        await query.edit_message_text(
-            text=final_text,
-            parse_mode='Markdown',
-            reply_markup=None
-        )
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=final_text, parse_mode='Markdown', reply_markup=None)
+
 
 # --- Вспомогательные функции ---
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

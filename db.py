@@ -1,4 +1,4 @@
-
+import datetime
 import os
 import psycopg2
 from psycopg2.extras import DictCursor, execute_batch
@@ -153,6 +153,83 @@ def get_user_food_constraints(telegram_id: int) -> set:
                     forbidden_products.add(row[0].lower())
         conn.close()
     return forbidden_products
+
+def get_product_lifetime(category_id: int):
+    sql_categories = f"""
+                     SELECT shelf_life_days
+                     FROM categories
+                     WHERE id = %s;
+                     """
+    conn = get_db_connection()
+    if conn:
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute(sql_categories, (category_id,))
+                    result = cur.fetchone()
+                    if result:
+                        life_time = result[0]
+        except Exception as e:
+            print(f"Error getting product category: {e}")
+        finally:
+            conn.close()
+
+    return life_time
+
+def get_product_added_at(product_id: int):
+    sql_products = f"""
+                     SELECT added_at
+                     FROM categories
+                     WHERE product_id = %s;
+                     """
+    conn = get_db_connection()
+    if conn:
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute(sql_products, (product_id,))
+                    result = cur.fetchone()
+                    if result:
+                        added_at = result[0]
+        except Exception as e:
+            print(f"Error getting product category: {e}")
+        finally:
+            conn.close()
+
+    return added_at
+
+
+def get_product_category(product_id: int):
+    sql_categories = """
+                     SELECT category_id
+                     FROM products
+                     WHERE id = %s;
+                     """
+    conn = get_db_connection()
+    category = None
+    if conn:
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute(sql_categories, (product_id,))
+                    result = cur.fetchone()
+                    if result:
+                        category = result[0]
+        except Exception as e:
+            print(f"Error getting product category: {e}")
+        finally:
+            conn.close()
+
+    return int(category) if category is not None else None
+
+def is_product_expired(product_id: int):
+    added_at = get_product_added_at(product_id)
+    life_time = get_product_lifetime(category_id=get_product_category(product_id))
+    if not life_time:
+        return False
+    cur_time = datetime.date.today()
+    return (cur_time - added_at).days > life_time
+
 
 
 def upsert_products_to_user(telegram_id: int, products_data: list):

@@ -62,11 +62,12 @@ VOSK_MODEL = None
 (
     MANAGE_STORAGE, ADD_PRODUCTS, REMOVE_PRODUCTS,
     MANAGE_EQUIPMENT, ADD_EQUIPMENT, REMOVE_EQUIPMENT,
+    SELECTING_EQUIPMENT_KEYBOARD, SELECTING_EQUIPMENT_FOR_REMOVAL,
     CHOOSE_RECIPE_TYPE, FILTER_BY_TIME,
     MANAGE_PREFERENCES, 
     ADD_PREFERENCE, ADD_CONSTRAINT, 
     CHOOSE_DELETE_TYPE, AWAIT_PREFERENCE_DELETION, AWAIT_CONSTRAINT_DELETION
-) = range(14)
+) = range(16)
 
 # --- ФУНКЦИИ ДЛЯ РАБОТЫ С ГОЛОСОВЫМИ СООБЩЕНИЯМИ ---
 
@@ -243,79 +244,159 @@ async def view_equipment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text("У вас не добавлено оборудование.")
     return MANAGE_EQUIPMENT
 
-async def add_equipment_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+def build_equipment_keyboard(selected_items: set) -> InlineKeyboardMarkup:
+    """Создает инлайн-клавиатуру с кнопками оборудования."""
+    keyboard = []
+    row = []
+    for equipment in EQUIPMENT_LIST:
+        text = f"✅ {equipment.capitalize()}" if equipment in selected_items else equipment.capitalize()
+        row.append(InlineKeyboardButton(text, callback_data=f"equip_{equipment}"))
+        if len(row) == 2:
+            keyboard.append(row)
+            row = []
+    if row:
+        keyboard.append(row)
+    
+    keyboard.append([InlineKeyboardButton("✅ Готово", callback_data="equip_done")])
+    return InlineKeyboardMarkup(keyboard)
+
+async def add_equipment_interactive(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Начинает процесс добавления оборудования с помощью инлайн-кнопок."""
+    context.user_data['selected_equipment'] = set()
+
+    keyboard = build_equipment_keyboard(context.user_data['selected_equipment'])
     await update.message.reply_text(
-        "Введите оборудование, которое хотите добавить, через запятую (или отправьте голосовое сообщение):",
-        reply_markup=REMOVE_KEYBOARD
+        "Выберите ваше оборудование. Нажмите на предмет еще раз, чтобы убрать его.\n"
+        "Когда закончите, нажмите 'Готово'.",
+        reply_markup=keyboard
     )
-    return ADD_EQUIPMENT
+    
+    return SELECTING_EQUIPMENT_KEYBOARD
 
-async def add_equipment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Добавление оборудования с валидацией."""
-    text = None
-    if update.message.voice:
-        text = await process_voice_message(update, context)
-        if not text:
-            return ADD_EQUIPMENT
-        await update.message.reply_text(f"🎤 Распознано: {text}")
-    elif update.message.text:
-        text = update.message.text
+async def select_equipment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Обрабатывает нажатия на кнопки выбора оборудования."""
+    query = update.callback_query
+    await query.answer() 
     
-    if not text:
-        await update.message.reply_text("Пожалуйста, введите текст или отправьте голосовое сообщение.")
-        return ADD_EQUIPMENT
+    selected_item = query.data.split('_', 1)[1]
     
+    user_selection = context.user_data.get('selected_equipment', set())
+
+    if selected_item in user_selection:
+        user_selection.remove(selected_item)
+    else:
+        user_selection.add(selected_item)
+        
+    context.user_data['selected_equipment'] = user_selection
+
+    keyboard = build_equipment_keyboard(user_selection)
+    await query.edit_message_reply_markup(reply_markup=keyboard)
+
+    return SELECTING_EQUIPMENT_KEYBOARD
+
+async def done_selecting_equipment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Завершает выбор и сохраняет оборудование."""
+    query = update.callback_query
+    await query.answer()
+
+    user_id = query.from_user.id
+    selected_equipment = context.user_data.get('selected_equipment')
+
+    if selected_equipment:
+        db.add_user_equipment(user_id, selected_equipment)
+        
+        await query.edit_message_text(
+            text=f"✅ Оборудование сохранено: {', '.join(sorted(list(selected_equipment)))}"
+        )
+    else:
+        await query.edit_message_text(text="Вы ничего не выбрали.")
+
+    context.user_data.pop('selected_equipment', None)
+    
+    await manage_equipment(update.callback_query, context)
+    return MANAGE_EQUIPMENT
+
+def build_remove_equipment_keyboard(user_equipment: list, selected_for_removal: set) -> InlineKeyboardMarkup:
+    """Создает инлайн-клавиатуру из оборудования, которое есть у пользователя."""
+    keyboard = []
+    row = []
+    for equipment in sorted(user_equipment):
+        text = f"❌ {equipment.capitalize()}" if equipment in selected_for_removal else equipment.capitalize()
+        row.append(InlineKeyboardButton(text, callback_data=f"del_equip_{equipment}"))
+        if len(row) == 2:
+            keyboard.append(row)
+            row = []
+    if row:
+        keyboard.append(row)
+    
+    keyboard.append([InlineKeyboardButton("🗑️ Удалить выбранное", callback_data="del_equip_done")])
+    return InlineKeyboardMarkup(keyboard)
+
+async def remove_equipment_interactive(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Начинает процесс удаления оборудования с помощью инлайн-кнопок."""
     user_id = update.message.from_user.id
-    input_equipment = {e.strip().lower() for e in text.split(",") if e.strip()}
-    
-    valid_equipment = input_equipment.intersection(ALL_EQUIPMENT_CACHE)
-    invalid_equipment = input_equipment.difference(ALL_EQUIPMENT_CACHE)
-    
-    if valid_equipment:
-        db.add_user_equipment(user_id, valid_equipment)
-        await update.message.reply_text(f"✅ Добавлено: {', '.join(sorted(valid_equipment))}")
-    if invalid_equipment:
-        await update.message.reply_text(f"❌ Не найдено в справочнике: {', '.join(sorted(invalid_equipment))}")
+    user_equipment = list(db.get_user_equipment(user_id))
 
-    return await manage_equipment(update, context)
+    if not user_equipment:
+        await update.message.reply_text("У вас нет оборудования для удаления.")
+        return MANAGE_EQUIPMENT
 
-async def remove_equipment_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data['user_equipment_list'] = user_equipment
+    context.user_data['equipment_to_remove'] = set()
+
+    keyboard = build_remove_equipment_keyboard(user_equipment, set())
     await update.message.reply_text(
-        "Введите оборудование для удаления, через запятую (или отправьте голосовое сообщение):",
-        reply_markup=REMOVE_KEYBOARD
+        "Выберите оборудование, которое хотите удалить:",
+        reply_markup=keyboard
     )
-    return REMOVE_EQUIPMENT
+    
+    return SELECTING_EQUIPMENT_FOR_REMOVAL
 
-async def remove_equipment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Удаление оборудования с валидацией."""
-    # Получаем текст из сообщения или из голосового распознавания
-    text = None
-    if update.message.voice:
-        text = await process_voice_message(update, context)
-        if not text:
-            return REMOVE_EQUIPMENT
-        await update.message.reply_text(f"🎤 Распознано: {text}")
-    elif update.message.text:
-        text = update.message.text
-    
-    if not text:
-        await update.message.reply_text("Пожалуйста, введите текст или отправьте голосовое сообщение.")
-        return REMOVE_EQUIPMENT
-    
-    user_id = update.message.from_user.id
-    input_equipment = {e.strip().lower() for e in text.split(",") if e.strip()}
-    
-    valid_equipment = input_equipment.intersection(ALL_EQUIPMENT_CACHE)
-    invalid_equipment = input_equipment.difference(ALL_EQUIPMENT_CACHE)
-    
-    if valid_equipment:
-        db.remove_user_equipment(user_id, valid_equipment)
-        await update.message.reply_text(f"✅ Удалено: {', '.join(sorted(valid_equipment))}")
-    
-    if invalid_equipment:
-        await update.message.reply_text(f"❌ Не найдено в справочнике: {', '.join(sorted(invalid_equipment))}")
+async def select_equipment_for_removal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Обрабатывает нажатия на кнопки выбора оборудования для удаления."""
+    query = update.callback_query
+    await query.answer()
 
-    return await manage_equipment(update, context)
+    selected_item = query.data.split('_', 2)[2]
+    
+    selection_set = context.user_data.get('equipment_to_remove', set())
+    
+    if selected_item in selection_set:
+        selection_set.remove(selected_item)
+    else:
+        selection_set.add(selected_item)
+    
+    context.user_data['equipment_to_remove'] = selection_set
+    
+    # Обновляем клавиатуру с новым выбором
+    user_equipment = context.user_data.get('user_equipment_list', [])
+    keyboard = build_remove_equipment_keyboard(user_equipment, selection_set)
+    await query.edit_message_reply_markup(reply_markup=keyboard)
+
+    return SELECTING_EQUIPMENT_FOR_REMOVAL
+
+async def done_removing_equipment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Завершает выбор и удаляет оборудование."""
+    query = update.callback_query
+    await query.answer()
+
+    user_id = query.from_user.id
+    equipment_to_remove = context.user_data.get('equipment_to_remove')
+
+    if equipment_to_remove:
+        db.remove_user_equipment(user_id, equipment_to_remove)
+        await query.edit_message_text(
+            text=f"✅ Удалено: {', '.join(sorted(list(equipment_to_remove)))}"
+        )
+    else:
+        await query.edit_message_text(text="Ничего не было удалено.")
+
+    # Очистка временных данных
+    context.user_data.pop('user_equipment_list', None)
+    context.user_data.pop('equipment_to_remove', None)
+    
+    await manage_equipment(update.callback_query, context)
+    return MANAGE_EQUIPMENT
 
 # --- УПРАВЛЕНИЕ ХОЛОДИЛЬНИКОМ ---
 
@@ -1326,20 +1407,22 @@ def main() -> None:
         states={
             MANAGE_EQUIPMENT: [
                 MessageHandler(filters.Regex("^Посмотреть оборудование$"), view_equipment),
-                MessageHandler(filters.Regex("^Добавить оборудование$"), add_equipment_prompt),
-                MessageHandler(filters.Regex("^Удалить оборудование$"), remove_equipment_prompt),
+                MessageHandler(filters.Regex("^Добавить оборудование$"), add_equipment_interactive),
+                MessageHandler(filters.Regex("^Удалить оборудование$"), remove_equipment_interactive),
             ],
-            ADD_EQUIPMENT: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, add_equipment),
-                MessageHandler(filters.VOICE, add_equipment),
+            SELECTING_EQUIPMENT_KEYBOARD: [
+                CallbackQueryHandler(done_selecting_equipment, pattern="^equip_done$"),
+                CallbackQueryHandler(select_equipment_callback, pattern="^equip_"),
             ],
-            REMOVE_EQUIPMENT: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, remove_equipment),
-                MessageHandler(filters.VOICE, remove_equipment),
+            SELECTING_EQUIPMENT_FOR_REMOVAL: [
+                CallbackQueryHandler(done_removing_equipment, pattern="^del_equip_done$"),
+                CallbackQueryHandler(select_equipment_for_removal_callback, pattern="^del_equip_"),
             ],
         },
         fallbacks=common_fallbacks,
+        per_message=False,
     )
+    
     # Ветка 3: Управление предпочтениями и ограничениями
     preferences_conv = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^Предпочтения и ограничения$"), manage_preferences)],

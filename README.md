@@ -78,4 +78,4 @@ rm vosk-model-small-ru-0.22.zip
 python main.py
 ```
 
-[[ Презентация проекта | https://drive.google.com/file/d/1DAG1da3HlAzqMt-qG5YZ1SfSVDcsSLi_/view?usp=sharing ]]
+[Презентация проекта](https://drive.google.com/file/d/1DAG1da3HlAzqMt-qG5YZ1SfSVDcsSLi_/view?usp=sharing)

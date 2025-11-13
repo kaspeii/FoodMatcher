@@ -10,7 +10,7 @@ from typing import Optional, Tuple, List, Dict, Any, Set
 from globals import *
 from thefuzz import process
 
-from telegram import (InlineKeyboardButton, InlineKeyboardMarkup,
+from telegram import (InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto,
                     ReplyKeyboardMarkup, ReplyKeyboardRemove, Update)
 from telegram.ext import (Application, CallbackQueryHandler, CommandHandler,
                           ConversationHandler, ContextTypes, MessageHandler, filters)
@@ -152,11 +152,11 @@ async def process_voice_message(update: Update, context: ContextTypes.DEFAULT_TY
             logger.info(f"Распознано из голосового сообщения: {text}")
             return text
         else:
-            await update.message.reply_text("Не удалось распознать речь. Попробуйте еще раз или введите текст.")
+            await update.message.reply_text("Не удалось распознать речь. Попробуй еще раз или введи текст.")
             return None
             
     except Exception as e:
-        await update.message.reply_text("Произошла ошибка при обработке голосового сообщения. Попробуйте ввести текст.")
+        await update.message.reply_text("Произошла ошибка при обработке голосового сообщения. Попробуй ввести текст.")
         return None
 
 # --- УНИВЕРСАЛЬНЫЕ ФУНКЦИИ И ГЛАВНОЕ МЕНЮ ---
@@ -178,7 +178,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     ]
     
     await update.message.reply_text(
-        f"👋 Привет, {user.first_name}! Я ваш кулинарный помощник. Выберите действие:",
+        f"👋 Привет, {user.first_name}! Я твой кулинарный помощник. Выбери действие:",
         reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True),
     )
     
@@ -201,7 +201,7 @@ async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     ]
     
     await update.message.reply_text(
-        f"Выберите действие:",
+        f"Выбери действие:",
         reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True),
     )
     
@@ -220,7 +220,10 @@ async def back_to_main_menu_inline(update: Update, context: ContextTypes.DEFAULT
     """
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text(text="Вы вернулись в главное меню.")
+    if query.message.photo:
+        await query.edit_message_caption(caption="Ты вернулся в главное меню.", reply_markup=None)
+    else:
+        await query.edit_message_text(text="Ты вернулся в главное меню.", reply_markup=None)
 
 # --- УПРАВЛЕНИЕ ОБОРУДОВАНИЕМ ---
 
@@ -231,7 +234,7 @@ async def manage_equipment(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         ["Добавить оборудование", "Удалить оборудование"],
         ["Назад в меню"],
     ]
-    await update.message.reply_text("Выберите действие:", reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True))
+    await update.message.reply_text("Выбери действие:", reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True))
     return MANAGE_EQUIPMENT
 
 async def view_equipment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -239,9 +242,9 @@ async def view_equipment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     user_id = update.message.from_user.id
     equipment = db.get_user_equipment(user_id)
     if equipment:
-        await update.message.reply_text("Ваше оборудование:\n- " + "\n- ".join(sorted(list(equipment))))
+        await update.message.reply_text("Твое оборудование:\n- " + "\n- ".join(sorted(list(equipment))))
     else:
-        await update.message.reply_text("У вас не добавлено оборудование.")
+        await update.message.reply_text("У тебя не добавлено оборудование.")
     return MANAGE_EQUIPMENT
 
 def build_equipment_keyboard(selected_items: set) -> InlineKeyboardMarkup:
@@ -266,8 +269,8 @@ async def add_equipment_interactive(update: Update, context: ContextTypes.DEFAUL
 
     keyboard = build_equipment_keyboard(context.user_data['selected_equipment'])
     await update.message.reply_text(
-        "Выберите ваше оборудование. Нажмите на предмет еще раз, чтобы убрать его.\n"
-        "Когда закончите, нажмите 'Готово'.",
+        "Выбери свое оборудование. Нажми на предмет еще раз, чтобы убрать его.\n"
+        "Когда закончишь, нажми 'Готово'.",
         reply_markup=keyboard
     )
     
@@ -309,7 +312,7 @@ async def done_selecting_equipment(update: Update, context: ContextTypes.DEFAULT
             text=f"✅ Оборудование сохранено: {', '.join(sorted(list(selected_equipment)))}"
         )
     else:
-        await query.edit_message_text(text="Вы ничего не выбрали.")
+        await query.edit_message_text(text="Ты ничего не выбрал.")
 
     context.user_data.pop('selected_equipment', None)
     
@@ -338,7 +341,7 @@ async def remove_equipment_interactive(update: Update, context: ContextTypes.DEF
     user_equipment = list(db.get_user_equipment(user_id))
 
     if not user_equipment:
-        await update.message.reply_text("У вас нет оборудования для удаления.")
+        await update.message.reply_text("У тебя нет оборудования для удаления.")
         return MANAGE_EQUIPMENT
 
     context.user_data['user_equipment_list'] = user_equipment
@@ -346,7 +349,7 @@ async def remove_equipment_interactive(update: Update, context: ContextTypes.DEF
 
     keyboard = build_remove_equipment_keyboard(user_equipment, set())
     await update.message.reply_text(
-        "Выберите оборудование, которое хотите удалить:",
+        "Выбери оборудование, которое хочешь удалить:",
         reply_markup=keyboard
     )
     
@@ -407,7 +410,7 @@ async def manage_storage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         ["Добавить продукты", "Удалить продукты"],
         ["Назад в меню"],
     ]
-    await update.message.reply_text("Выберите действие:", reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True))
+    await update.message.reply_text("Выбери действие:", reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True))
     return MANAGE_STORAGE
 
 
@@ -526,14 +529,11 @@ def convert_to_standard_unit(quantity: Decimal, unit: Optional[str], product_inf
     if quantity is None:
         return None, None
         
-    standard_base_unit = re.sub(r'^\d+', '', product_info['per_unit'])
 
     if unit is None:
-        if standard_base_unit in ['g', 'ml'] and product_info['per_unit'].startswith('100'):
-             return quantity * 100, standard_base_unit
-        return quantity, standard_base_unit
+        return quantity, "г"
 
-    if unit == standard_base_unit:
+    if unit in ["г","мл","шт"]:
         return quantity, unit
 
     if unit not in CONVERSION_FACTORS:
@@ -541,14 +541,12 @@ def convert_to_standard_unit(quantity: Decimal, unit: Optional[str], product_inf
 
     multiplier, unit_base_type = CONVERSION_FACTORS[unit]
     
-    if unit_base_type != standard_base_unit:
-        return None, None
 
-    return quantity * multiplier, standard_base_unit
+    return quantity * multiplier, unit_base_type
 
 async def add_products_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text(
-        "Введите продукты для добавления через запятую (или отправьте голосовое сообщение):",
+        "Введи продукты для добавления через запятую (или отправь голосовое сообщение):",
         reply_markup=REMOVE_KEYBOARD
     )
     return ADD_PRODUCTS
@@ -566,14 +564,14 @@ async def add_products(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         text = update.message.text
     
     if not text:
-        await update.message.reply_text("Пожалуйста, введите текст или отправьте голосовое сообщение.")
+        await update.message.reply_text("Пожалуйста, введи текст или отправь голосовое сообщение.")
         return ADD_PRODUCTS
     
     user_id = update.message.from_user.id
     
     parsed_input = parse_products_with_quantity(text, set(ALL_PRODUCTS_CACHE.keys()))
     if not parsed_input:
-        await update.message.reply_text("Пожалуйста, введите названия продуктов.")
+        await update.message.reply_text("Пожалуйста, введи названия продуктов.")
         return await manage_storage(update, context)
 
     current_fridge = db.get_user_products(user_id)
@@ -657,7 +655,7 @@ async def add_products(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 
 async def remove_products_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text(
-        "Введите продукты для удаления через запятую (или отправьте голосовое сообщение):",
+        "Введи продукты для удаления через запятую (или отправь голосовое сообщение):",
         reply_markup=REMOVE_KEYBOARD
     )
     return REMOVE_PRODUCTS
@@ -675,14 +673,14 @@ async def remove_products(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         text = update.message.text
     
     if not text:
-        await update.message.reply_text("Пожалуйста, введите текст или отправьте голосовое сообщение.")
+        await update.message.reply_text("Пожалуйста, введи текст или отправь голосовое сообщение.")
         return REMOVE_PRODUCTS
     
     user_id = update.message.from_user.id
     
     parsed_input = parse_products_with_quantity(text, set(ALL_PRODUCTS_CACHE.keys()))
     if not parsed_input:
-        await update.message.reply_text("Пожалуйста, введите названия продуктов.")
+        await update.message.reply_text("Пожалуйста, введи названия продуктов.")
         return await manage_storage(update, context)
         
     current_fridge = db.get_user_products(user_id)
@@ -757,7 +755,7 @@ async def manage_preferences(update: Update, context: ContextTypes.DEFAULT_TYPE)
         ["Назад в меню"],
     ]
     await update.message.reply_text(
-        "Здесь вы можете указать ваши вкусовые предпочтения и ограничения (например, аллергии) в свободной форме.",
+        "Здесь ты можешь указать свои вкусовые предпочтения и ограничения (например, аллергии) в свободной форме.",
         reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
     )
     return MANAGE_PREFERENCES
@@ -771,25 +769,25 @@ async def view_preferences_and_constraints(update: Update, context: ContextTypes
     parts = []
     if preferences:
         pref_list = "\n".join([f"{i+1}. {p['note']}" for i, p in enumerate(preferences)])
-        parts.append(f"👍 *Ваши предпочтения:*\n{pref_list}")
+        parts.append(f"👍 *Твои предпочтения:*\n{pref_list}")
     else:
-        parts.append("👍 *Ваши предпочтения:*\n(пусто)")
+        parts.append("👍 *Твои предпочтения:*\n(пусто)")
 
     if constraints:
         const_list = "\n".join([f"{i+1}. {c['note']}" for i, c in enumerate(constraints)])
-        parts.append(f"🚫 *Ваши ограничения:*\n{const_list}")
+        parts.append(f"🚫 *Твои ограничения:*\n{const_list}")
     else:
-        parts.append("🚫 *Ваши ограничения:*\n(пусто)")
+        parts.append("🚫 *Твои ограничения:*\n(пусто)")
         
     await update.message.reply_text("\n\n".join(parts), parse_mode='Markdown')
     return MANAGE_PREFERENCES
 
 async def add_preference_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text("Напишите, что вы любите в еде:", reply_markup=REMOVE_KEYBOARD)
+    await update.message.reply_text("Напиши, что ты любишь или недолюбливаешь в еде:", reply_markup=REMOVE_KEYBOARD)
     return ADD_PREFERENCE
 
 async def add_constraint_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text("Напишите, что вам нельзя или что вы не любите:", reply_markup=REMOVE_KEYBOARD)
+    await update.message.reply_text("Напиши, что тебе нельзя или что ты не любишь:", reply_markup=REMOVE_KEYBOARD)
     return ADD_CONSTRAINT
 
 async def add_preference(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -800,7 +798,7 @@ async def add_preference(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     notes_to_add = [note.strip() for note in text_input.split(',') if len(note.strip()) >= 3]
 
     if not notes_to_add:
-        await update.message.reply_text("Не удалось распознать корректные предпочтения. Попробуйте еще раз, длина каждого пункта должна быть не менее 3 символов.")
+        await update.message.reply_text("Не удалось распознать корректные предпочтения. Попробуй еще раз, длина каждого пункта должна быть не менее 3 символов.")
         return ADD_PREFERENCE
 
     for note in notes_to_add:
@@ -819,7 +817,7 @@ async def add_constraint(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     constraints_to_add = [constraint.strip() for constraint in text_input.split(',') if len(constraint.strip()) >= 3]
 
     if not constraints_to_add:
-        await update.message.reply_text("Не удалось распознать корректные ограничения. Попробуйте еще раз, длина каждого пункта должна быть не менее 3 символов.")
+        await update.message.reply_text("Не удалось распознать корректные ограничения. Попробуй еще раз, длина каждого пункта должна быть не менее 3 символов.")
         return ADD_CONSTRAINT
 
     for constraint in constraints_to_add:
@@ -834,7 +832,7 @@ async def delete_type_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE)
     """Спрашивает, что удалять: предпочтения или ограничения."""
     reply_keyboard = [["Предпочтения"], ["Ограничения"], ["Отмена"]]
     await update.message.reply_text(
-        "Записи из какого списка вы хотите удалить?",
+        "Записи из какого списка ты хочешь удалить?",
         reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True, one_time_keyboard=True)
     )
     return CHOOSE_DELETE_TYPE
@@ -852,9 +850,8 @@ async def list_preferences_for_deletion(update: Update, context: ContextTypes.DE
     
     pref_list = "\n".join([f"{i+1}. {p['note']}" for i, p in enumerate(preferences)])
     await update.message.reply_text(
-        f"Ваши предпочтения:\n{pref_list}\n\n"
-        "Введите номера записей, которые хотите удалить (через запятую, например: 1, 3). "
-        "Или напишите 'все', чтобы очистить список.",
+        f"Твои предпочтения:\n{pref_list}\n\n"
+        "Введи номера записей для удаления (например: 2, 4) или 'все' для очистки.",
         reply_markup=REMOVE_KEYBOARD
     )
     return AWAIT_PREFERENCE_DELETION
@@ -871,8 +868,8 @@ async def list_constraints_for_deletion(update: Update, context: ContextTypes.DE
     
     const_list = "\n".join([f"{i+1}. {c['note']}" for i, c in enumerate(constraints)])
     await update.message.reply_text(
-        f"Ваши ограничения:\n{const_list}\n\n"
-        "Введите номера записей для удаления (например: 2, 4) или 'все' для очистки.",
+        f"Твои ограничения:\n{const_list}\n\n"
+        "Введи номера записей для удаления (например: 2, 4) или 'все' для очистки.",
         reply_markup=REMOVE_KEYBOARD
     )
     return AWAIT_CONSTRAINT_DELETION
@@ -896,14 +893,14 @@ async def delete_preferences_by_number(update: Update, context: ContextTypes.DEF
         ids_to_delete = [id_map[num] for num in input_numbers if num in id_map]
         
         if not ids_to_delete:
-            await update.message.reply_text("Не найдено записей с такими номерами. Попробуйте еще раз.")
+            await update.message.reply_text("Не найдено записей с такими номерами. Попробуй еще раз.")
             return AWAIT_PREFERENCE_DELETION
             
         db.delete_user_preferences_by_ids(user_id, ids_to_delete)
         await update.message.reply_text(f"✅ Записи с номерами {', '.join(map(str, sorted(input_numbers)))} удалены.")
 
     except ValueError:
-        await update.message.reply_text("Пожалуйста, введите числа, разделенные запятой, или слово 'все'.")
+        await update.message.reply_text("Пожалуйста, введи числа, разделенные запятой, или слово 'все'.")
         return AWAIT_PREFERENCE_DELETION
     finally:
         context.user_data.pop('id_map', None)
@@ -926,14 +923,14 @@ async def delete_constraints_by_number(update: Update, context: ContextTypes.DEF
         ids_to_delete = [id_map[num] for num in input_numbers if num in id_map]
         
         if not ids_to_delete:
-            await update.message.reply_text("Не найдено записей с такими номерами. Попробуйте еще раз.")
+            await update.message.reply_text("Не найдено записей с такими номерами. Попробуй еще раз.")
             return AWAIT_CONSTRAINT_DELETION
             
         db.delete_user_food_constraints_by_ids(user_id, ids_to_delete)
         await update.message.reply_text(f"✅ Записи с номерами {', '.join(map(str, sorted(input_numbers)))} удалены.")
 
     except ValueError:
-        await update.message.reply_text("Пожалуйста, введите числа, разделенные запятой, или слово 'все'.")
+        await update.message.reply_text("Пожалуйста, введи числа, разделенные запятой, или слово 'все'.")
         return AWAIT_CONSTRAINT_DELETION
     finally:
         context.user_data.pop('id_map', None)
@@ -960,7 +957,7 @@ async def prompt_for_time(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     time_keyboard = ReplyKeyboardMarkup([["Неважно"]], one_time_keyboard=True, resize_keyboard=True)
     
     await update.message.reply_text(
-        "Введите максимальное время приготовления в минутах или нажмите кнопку.",
+        "Введи максимальное время приготовления в минутах или нажми кнопку.",
         reply_markup=time_keyboard
     )
     return FILTER_BY_TIME
@@ -1046,8 +1043,7 @@ def _parse_recipe_quantity(description: str) -> Decimal | None:
 
     return matched_recipes
 
-# ПЕРЕНЕСТИ НА СТОРОНУ БД
-def preliminary_filter_recipes(user_products: dict, recipe_type: str, max_time: int, all_recipes: list) -> list:
+# def preliminary_filter_recipes(user_products: dict, recipe_type: str, max_time: int, all_recipes: list) -> list:
     """
     Предварительная фильтрация рецептов по жестким критериям, которые легко проверить кодом:
     - Нехватка ингредиентов (в зависимости от выбора пользователя)
@@ -1130,7 +1126,7 @@ async def filter_recipes_with_llm(recipes_to_filter: list, equipment_constraints
     try:
         logger.info("Отправка запроса к LLM для фильтрации рецептов...")
         completion = await groq_client.chat.completions.create(
-            model="openai/gpt-oss-20b",
+            model="llama-3.3-70b-versatile",
             messages=[
                 {
                     "role": "system",
@@ -1178,22 +1174,20 @@ async def find_and_show_recipes(update: Update, context: ContextTypes.DEFAULT_TY
         try:
             max_time = int(user_input)
         except (ValueError, TypeError):
-            await update.message.reply_text("Это не похоже на число. Пожалуйста, введите время в минутах или нажмите 'Неважно'.")
+            await update.message.reply_text("Это не похоже на число. Пожалуйста, введи время в минутах или нажми 'Неважно'.")
             return FILTER_BY_TIME
     
     user_id = update.message.from_user.id
     
-    user_products = db.get_user_products(user_id)
     user_equipment = db.get_user_equipment(user_id)
     constraints_from_db  = db.get_user_food_constraints_with_ids(user_id)
     preferences_from_db  = db.get_user_preferences_with_ids(user_id)
-    all_recipes = db.get_all_recipes()
     recipe_type = context.user_data.get("recipe_type")
     
     user_preferences = [p['note'] for p in preferences_from_db]
     food_constraints = [c['note'] for c in constraints_from_db]
     
-    pre_filtered_recipes = preliminary_filter_recipes(user_products, recipe_type, max_time, all_recipes)
+    pre_filtered_recipes = db.preliminary_filter_recipes_db(user_id, recipe_type, max_time)
     # recipes.sort(key=lambda r: _calculate_preference_score(r, user_preferences), reverse=True)
 
     if not pre_filtered_recipes:
@@ -1248,18 +1242,26 @@ async def recipe_details(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     recipe = db.get_recipe_by_id(recipe_id)
     
     if not recipe:
-        await query.edit_message_text(text="Извините, этот рецепт не найден.")
+        await query.edit_message_text(text="Извини, этот рецепт не найден.")
         return
 
+    main_image_url = db.get_recipe_main_image(recipe_id)
+    nutrition_info = db.get_recipe_nutrition(recipe_id)
+    
     ingredients_list = "\n".join(
         f"- {name.capitalize()}: {amount}" for name, amount in recipe["ingredients"].items()
     )
     
-    kbju_info = recipe.get("kbju", {})
-    kbju_text = (f"Калории: {kbju_info.get('calories', 'N/A')} ккал\n"
-                 f"Белки: {kbju_info.get('proteins', 'N/A')} г\n"
-                 f"Жиры: {kbju_info.get('fats', 'N/A')} г\n"
-                 f"Углеводы: {kbju_info.get('carbohydrates', 'N/A')} г")
+    if nutrition_info:
+        def format_decimal(d_val):
+            """Красиво форматирует число, убирая лишние нули."""
+            return f"{d_val:.2f}".rstrip('0').rstrip('.')
+
+        kbju_text = (f"  - Калории: {format_decimal(nutrition_info['calories'])} ккал\n"
+                     f"  - Белки: {format_decimal(nutrition_info['protein'])} г\n"
+                     f"  - Жиры: {format_decimal(nutrition_info['fat'])} г\n"
+                     f"  - Углеводы: {format_decimal(nutrition_info['carbs'])} г")
+        
     
     instructions_text = '\n'.join(recipe['instructions'].splitlines())
 
@@ -1270,7 +1272,7 @@ async def recipe_details(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         f"*Способ приготовления:*\n{instructions_text}\n\n" 
         f"*Время приготовления:* {recipe['cooking_time_minutes']} мин.\n\n"
         f"*Оборудование:* {recipe['equipment']}\n"
-        # f"*КБЖУ:*\n{kbju_text}"
+        f"*КБЖУ на 100г:*\n{kbju_text}"
     )
     
     keyboard = InlineKeyboardMarkup([
@@ -1278,7 +1280,21 @@ async def recipe_details(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         [InlineKeyboardButton("⬅️ Назад в меню", callback_data="main_menu_back")]
     ])
 
-    await query.edit_message_text(text=text, parse_mode='Markdown', reply_markup=keyboard)
+    if main_image_url:
+        # ПРАВИЛЬНЫЙ СПОСОБ: Редактируем сообщение, заменяя его содержимое на фото с подписью
+        media = InputMediaPhoto(
+            media=main_image_url,
+            caption=text,
+            parse_mode='Markdown'
+        )
+        await query.edit_message_media(media=media, reply_markup=keyboard)
+    else:
+        # Если картинки нет, просто редактируем текст, как и раньше
+        await query.edit_message_text(
+            text=text,
+            parse_mode='Markdown',
+            reply_markup=keyboard
+        )
     
 async def cook_recipe_and_update_storage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обрабатывает нажатие кнопки "Приготовить" и списывает ингредиенты."""
@@ -1290,7 +1306,10 @@ async def cook_recipe_and_update_storage(update: Update, context: ContextTypes.D
     recipe = db.get_recipe_by_id(recipe_id)
 
     if not recipe:
-        await query.edit_message_text(text="Ошибка: рецепт для списания не найден.")
+        if query.message.photo:
+            await query.edit_message_caption(caption="Ошибка: рецепт для списания не найден.", reply_markup=None)
+        else:
+            await query.edit_message_text(text="Ошибка: рецепт для списания не найден.", reply_markup=None)
         return
 
     current_fridge = db.get_user_products(user_id)
@@ -1298,7 +1317,7 @@ async def cook_recipe_and_update_storage(update: Update, context: ContextTypes.D
 
     products_to_delete = []
     products_to_update = []
-    report_lines = ["Обращаю Ваше внимание, что закончились следующие продукты:"]
+    report_lines = ["Обращаю Твое внимание, что закончились следующие продукты:"]
 
     for name, desc in required_ingredients.items():
         name = name.lower()
@@ -1340,20 +1359,32 @@ async def cook_recipe_and_update_storage(update: Update, context: ContextTypes.D
     else:
         final_report = "\n".join(report_lines)
         
-    await query.edit_message_text(
-        text=f"*{recipe['name']}*\n\n{final_report}\n\nПриятного аппетита!",
-        parse_mode='Markdown'
+    final_text = (
+        f"*{recipe['name']}*\n\n{final_report}\n\nПриятного аппетита!"
     )
+        
+    if query.message.photo:
+        await query.edit_message_caption(
+            caption=final_text,
+            parse_mode='Markdown',
+            reply_markup=None
+        )
+    else:
+        await query.edit_message_text(
+            text=final_text,
+            parse_mode='Markdown',
+            reply_markup=None
+        )
 
 # --- Вспомогательные функции ---
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Отправляет справочное сообщение."""
     help_text = (
-        "🤖 *Я ваш кулинарный помощник! Вот что я умею:*\n\n"
-        "● *Мой холодильник* - управляйте списком продуктов, которые у вас есть. Добавляйте и удаляйте их, чтобы я знал, из чего вам готовить.\n\n"
-        "● *Мое оборудование* - укажите, какая кухонная техника у вас есть (духовка, блендер и т.д.), чтобы я подбирал рецепты, которые вы точно сможете приготовить.\n\n"
-        "● *Подобрать рецепт* - главный раздел! Я найду лучшие блюда на основе ваших продуктов, оборудования и предпочтений, хранящихся в базе данных.\n\n"
-        "Для начала работы используйте кнопки в меню ниже."
+        "🤖 *Я твой кулинарный помощник! Вот что я умею:*\n\n"
+        "● *Мой холодильник* - управляй списком продуктов, которые у тебя есть. Добавляй и удаляй их, чтобы я знал, из чего тебе готовить.\n\n"
+        "● *Мое оборудование* - укажи, какая кухонная техника у тебя есть, чтобы я подбирал рецепты, которые ты точно сможешь приготовить.\n\n"
+        "● *Подобрать рецепт* - главный раздел! Я найду лучшие блюда на основе твоих продуктов, оборудования и предпочтений, хранящихся в базе данных.\n\n"
+        "Для начала работы используй кнопки в меню ниже."
     )
     await update.message.reply_text(help_text, parse_mode='Markdown')
 
@@ -1453,6 +1484,7 @@ def main() -> None:
             FILTER_BY_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, find_and_show_recipes)],
         },
         fallbacks=common_fallbacks,
+        per_message=False,
     )
     
     # Регистрация всех обработчиков

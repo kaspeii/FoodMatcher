@@ -1248,37 +1248,45 @@ async def find_and_show_recipes(update: Update, context: ContextTypes.DEFAULT_TY
     
     # рандомизируем порядок и далее ограничиваем до 20 рецептов чтобы не потерять все токены на одном запросе
     random.shuffle(recipes_for_llm)
-    if recipe_type == "Добавить 1-2 недостающих ингредиента":
-        recipes_for_llm = recipes_for_llm[:20]
+    
+    recipes_map = {recipe['name']: recipe for recipe in pre_filtered_recipes}
+    
+    final_recipes_list = []
+    MIN_RECIPES_TO_FIND = 5
+    CHUNK_SIZE = 20
+    start_index = 0
+
         
-    # 2. Финальная фильтрация и сортировка с помощью LLM
-    final_recipe_names, error_message = await filter_recipes_with_llm(
-        recipes_to_filter=recipes_for_llm, #[:20]
-        equipment_constraints=user_equipment,
-        strict_constraints=food_constraints,
-        soft_constraints=user_preferences
-    )
+    while start_index < len(recipes_for_llm) and len(final_recipes_list) < MIN_RECIPES_TO_FIND:
+        recipes_chunk = recipes_for_llm[start_index : start_index + CHUNK_SIZE]
+        
+        final_recipe_names, error_message = await filter_recipes_with_llm(
+            recipes_to_filter=recipes_chunk,
+            equipment_constraints=user_equipment,
+            strict_constraints=food_constraints,
+            soft_constraints=user_preferences
+        )
 
-    if error_message:
-        await update.message.reply_text(f"🛠️ Произошла ошибка: {error_message}")
-        await main_menu(update, context) 
-        context.user_data.clear()
-        return ConversationHandler.END
+        if error_message:
+            await update.message.reply_text(f"🛠️ Произошла ошибка во время обработки: {error_message}")
+            break
 
-    if not final_recipe_names:
-        await update.message.reply_text("😥 К сожалению, не удалось подобрать рецепты по твоим ограничениям и предпочтениям.")
+        if final_recipe_names:
+            for name in final_recipe_names:
+                if name in recipes_map:
+                    if not any(r['name'] == name for r in final_recipes_list):
+                         final_recipes_list.append(recipes_map[name])
+
+        start_index += CHUNK_SIZE
+
+
+    if not final_recipes_list:
+        await update.message.reply_text("😥 К сожалению, не удалось подобрать рецепты по твоим ограничениям и предпочтениям из всех доступных вариантов.")
     else:
-        recipes_map = {recipe['name']: recipe for recipe in pre_filtered_recipes}
-        final_recipes = [recipes_map[name] for name in final_recipe_names if name in recipes_map]
-
-        if not final_recipes:
-            await update.message.reply_text("⚙️ Произошла ошибка при сопоставлении рецептов. Попробуй еще раз.")
-            await main_menu(update, context) 
-            context.user_data.clear()
-            return ConversationHandler.END
-
         keyboard = []
-        for recipe in final_recipes: 
+        final_recipes_list.sort(key=lambda r: r['name'])
+
+        for recipe in final_recipes_list: 
             button = [InlineKeyboardButton(recipe["name"], callback_data=f"recipe_{recipe['id']}")]
             keyboard.append(button)
             
@@ -1288,7 +1296,6 @@ async def find_and_show_recipes(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text("🎉 Вот что я нашел:", reply_markup=reply_markup)
     
     await main_menu(update, context) 
-    
     context.user_data.clear()
     return ConversationHandler.END
 

@@ -1229,13 +1229,11 @@ async def find_and_show_recipes(update: Update, context: ContextTypes.DEFAULT_TY
         
     # 2. Финальная фильтрация и сортировка с помощью LLM
     final_recipe_names, error_message = await filter_recipes_with_llm(
-        recipes_to_filter=pre_filtered_recipes[:20],
+        recipes_to_filter=pre_filtered_recipes, #[:20]
         equipment_constraints=user_equipment,
         strict_constraints=food_constraints,
         soft_constraints=user_preferences
     )
-    
-    await main_menu(update, context) 
 
     if error_message:
         await update.message.reply_text(f"🛠️ Произошла ошибка: {error_message}")
@@ -1263,6 +1261,8 @@ async def find_and_show_recipes(update: Update, context: ContextTypes.DEFAULT_TY
         reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text("🎉 Вот что я нашел:", reply_markup=reply_markup)
     
+    await main_menu(update, context) 
+    
     context.user_data.clear()
     return ConversationHandler.END
 
@@ -1285,7 +1285,8 @@ async def recipe_details(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     nutrition_info = db.get_recipe_nutrition(recipe_id)
     
     ingredients_list = "\n".join(
-        f"- {name.capitalize()}: {amount}" for name, amount in recipe["ingredients"].items()
+        f"- {name.capitalize()}{f': {amount}' if amount is not None else ''}"
+        for name, amount in recipe["ingredients"].items()
     )
     
     if nutrition_info:
@@ -1300,19 +1301,24 @@ async def recipe_details(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         
     
     instructions_text = '\n'.join(recipe['instructions'].splitlines())
+    if recipe['cooking_time_minutes'] is None:
+        time = ""
+    else:
+        time = f"*Время приготовления:* {recipe['cooking_time_minutes']} мин.\n\n"
+        
 
     text = (
         f"*{recipe['name']}*\n\n"
         f"_{recipe['description']}_\n\n"
         f"*Ингредиенты:*\n{ingredients_list}\n\n"
         f"*Способ приготовления:*\n{instructions_text}\n\n" 
-        f"*Время приготовления:* {recipe['cooking_time_minutes']} мин.\n\n"
-        f"*Оборудование:* {recipe['equipment']}\n"
+        f"{time}"
+        f"*Оборудование:* {recipe['equipment'] if recipe['equipment'] is not None else "Оборудование не требуется"}\n"
         f"*КБЖУ на 100г:*\n{kbju_text}"
     )
     
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ Приготовить (списать ингредиенты)", callback_data=f"cook_{recipe_id}")],
+        [InlineKeyboardButton("✅ Готовим", callback_data=f"cook_{recipe_id}")],
         [InlineKeyboardButton("⬅️ Назад в меню", callback_data="main_menu_back")]
     ])
 

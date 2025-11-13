@@ -1361,13 +1361,21 @@ async def recipe_details(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         [InlineKeyboardButton("⬅️ Назад в меню", callback_data="main_menu_back")]
     ])
 
+    
     if main_image_url:
-        media = InputMediaPhoto(
-            media=main_image_url,
-            caption=text,
-            parse_mode='Markdown'
+        short_caption = f"*{recipe['name']}*\n\n_{recipe['description']}_"
+        media = InputMediaPhoto(media=main_image_url, caption=short_caption, parse_mode='Markdown')
+        await query.edit_message_media(media=media)
+
+        details_text = (
+            f"*Ингредиенты:*\n{ingredients_list}\n\n"
+            f"*Способ приготовления:*\n{instructions_text}\n\n" 
+            f"{time_str}"
+            f"*Оборудование:* {equipment_str}\n\n"
+            f"{kbju_text}"
         )
-        await query.edit_message_media(media=media, reply_markup=keyboard)
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=details_text, parse_mode='Markdown', reply_markup=keyboard)
+
     else:
         await query.edit_message_text(
             text=text,

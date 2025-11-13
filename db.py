@@ -295,7 +295,7 @@ def get_all_recipes() -> list[dict]:
                     description,
                     instructions,
                     cooking_time_minutes,
-                    equipment_raw AS equipment
+                    equipment_raw AS equipment_raw
                 FROM recipes
             """)
             for row in cur.fetchall():
@@ -322,6 +322,16 @@ def get_all_recipes() -> list[dict]:
             for row in cur.fetchall():
                 if row['recipe_id'] in recipes:
                     recipes[row['recipe_id']]['tags'].add(row['name'].lower())
+            
+            # 4. оборудование
+            cur.execute("""
+                SELECT e.name
+                FROM recipe_equipment re
+                JOIN equipment e ON re.equipment_id = e.id
+            """)
+            for row in cur.fetchall():
+                if row['recipe_id'] in recipes:
+                    recipes[row['recipe_id']]['equipment'].add(row['name'].lower())
     conn.close()
     
     return list(recipes.values())
@@ -491,7 +501,8 @@ def preliminary_filter_recipes_db(
     WITH user_inv AS (
         -- что есть у пользователя
         SELECT u.id AS user_id,
-               up.product_id
+               up.product_id,
+               up.quantity
         FROM users u
         JOIN user_products up ON up.user_id = u.id
         WHERE u.telegram_id = %s
@@ -503,7 +514,9 @@ def preliminary_filter_recipes_db(
                r.description,
                r.instructions,
                r.cooking_time_minutes,
-               ri.product_id
+               ri.product_id,
+               ri.quantity AS need_qty,
+               ri.unit     AS need_unit
         FROM recipes r
         JOIN recipe_ingredients ri ON ri.recipe_id = r.id
         WHERE (%s = 0 OR r.cooking_time_minutes IS NULL OR r.cooking_time_minutes <= %s)
@@ -516,7 +529,7 @@ def preliminary_filter_recipes_db(
             rn.description,
             rn.instructions,
             rn.cooking_time_minutes,
-            ui.product_id IS NOT NULL AS user_has
+            (ui.product_id IS NOT NULL AND ui.quantity >= rn.need_qty) AS user_has
         FROM recipe_need rn
         LEFT JOIN user_inv ui
                ON ui.product_id = rn.product_id
@@ -539,8 +552,8 @@ def preliminary_filter_recipes_db(
             cur.execute(sql, (telegram_id, max_time, max_time))
             rows = cur.fetchall()
 
-            only_owned = (recipe_type == "Только из имеющихся продуктов")
-            allow_1_2 = (recipe_type == "Добавить 1-2 недостающих ингредиента")
+            only_owned = (recipe_type == "✅ Только из имеющихся продуктов")
+            allow_1_2 = (recipe_type == "🛒 Добавить 1-2 недостающих ингредиента")
 
             for row in rows:
                 missing = row["missing_count"] or 0
